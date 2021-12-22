@@ -88,7 +88,7 @@ difference(){
             }
         }
     }
-    translate(-keycap/2) keys(keyswitch);
+    *translate(-keycap/2) keys(keyswitch);
 }
 
 module fill_bl(){

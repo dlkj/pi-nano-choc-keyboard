@@ -221,17 +221,6 @@ F 3 "~" H 2100 3350 50  0001 C CNN
 	1    2100 3150
 	0    1    1    0   
 $EndComp
-$Comp
-L Switch:SW_Push SW14
-U 1 1 61CB00FC
-P 2800 3150
-F 0 "SW14" V 2754 3298 50  0000 L CNN
-F 1 "SW_Push" V 2845 3298 50  0000 L CNN
-F 2 "keyswitches:SW_PG1350" H 2800 3350 50  0001 C CNN
-F 3 "~" H 2800 3350 50  0001 C CNN
-	1    2800 3150
-	0    1    1    0   
-$EndComp
 Text GLabel 5400 3350 2    50   Input ~ 0
 ROW_1
 $Comp
@@ -246,9 +235,6 @@ F 3 "~" H 1250 2950 50  0001 C CNN
 	1    0    0    -1  
 $EndComp
 Connection ~ 2100 3350
-Connection ~ 2800 3350
-Wire Wire Line
-	2100 3350 2800 3350
 Wire Wire Line
 	1400 3350 2100 3350
 $Comp
@@ -1078,7 +1064,7 @@ NoConn ~ 9700 3500
 Wire Wire Line
 	1800 2000 1800 2950
 Wire Wire Line
-	2500 2000 2500 2950
+	2500 2000 2500 2300
 $Comp
 L Device:Rotary_Encoder_Switch SW38
 U 1 1 61D11DCE
@@ -1164,9 +1150,7 @@ Connection ~ 4900 3350
 Wire Wire Line
 	4900 3350 5400 3350
 Wire Wire Line
-	1400 2700 3500 2700
-Wire Wire Line
-	2800 3350 3500 3350
+	1400 2700 2800 2700
 $Comp
 L Switch:SW_Push_Dual_x2 SW26
 U 1 1 61C4159B
@@ -1223,4 +1207,48 @@ $EndComp
 Connection ~ 3500 2700
 Wire Wire Line
 	3500 2700 4200 2700
+Wire Wire Line
+	2100 3350 2800 3350
+$Comp
+L Device:D_ALT D13
+U 1 1 61C34EA8
+P 2650 2300
+F 0 "D13" H 2650 2517 50  0000 C CNN
+F 1 "D_ALT" H 2650 2426 50  0000 C CNN
+F 2 "Diode_THT:D_DO-34_SOD68_P7.62mm_Horizontal" H 2650 2300 50  0001 C CNN
+F 3 "~" H 2650 2300 50  0001 C CNN
+	1    2650 2300
+	1    0    0    -1  
+$EndComp
+Connection ~ 2500 2300
+Wire Wire Line
+	2500 2300 2500 2950
+$Comp
+L Switch:SW_Push_Dual_x2 SW14
+U 2 1 61C35305
+P 2800 2500
+F 0 "SW14" V 2754 2648 50  0000 L CNN
+F 1 "SW_Push_Dual_x2" V 2845 2648 50  0000 L CNN
+F 2 "keyswitches:SW_PG1350_double_rotate" H 2800 2700 50  0001 C CNN
+F 3 "~" H 2800 2700 50  0001 C CNN
+	2    2800 2500
+	0    1    1    0   
+$EndComp
+Connection ~ 2800 2700
+Wire Wire Line
+	2800 2700 3500 2700
+$Comp
+L Switch:SW_Push_Dual_x2 SW14
+U 1 1 61C35B95
+P 2800 3150
+F 0 "SW14" V 2754 3298 50  0000 L CNN
+F 1 "SW_Push_Dual_x2" V 2845 3298 50  0000 L CNN
+F 2 "keyswitches:SW_PG1350_double_rotate" H 2800 3350 50  0001 C CNN
+F 3 "~" H 2800 3350 50  0001 C CNN
+	1    2800 3150
+	0    1    1    0   
+$EndComp
+Connection ~ 2800 3350
+Wire Wire Line
+	2800 3350 3500 3350
 $EndSCHEMATC
