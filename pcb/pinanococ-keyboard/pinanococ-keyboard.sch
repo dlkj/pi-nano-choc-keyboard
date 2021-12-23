@@ -1391,7 +1391,7 @@ Wire Wire Line
 Wire Wire Line
 	7600 3900 8300 3900
 $Comp
-L Connector_Generic:Conn_02x04_Top_Bottom J2
+L Connector_Generic:Conn_02x04_Odd_Even J2
 U 1 1 61C5EAE6
 P 8450 2050
 F 0 "J2" H 8500 2367 50  0000 C CNN
