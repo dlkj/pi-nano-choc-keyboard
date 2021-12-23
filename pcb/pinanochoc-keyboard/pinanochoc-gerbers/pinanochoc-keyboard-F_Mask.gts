@@ -1,6 +1,6 @@
 G04 #@! TF.GenerationSoftware,KiCad,Pcbnew,5.99.0+really5.1.10+dfsg1-1*
 G04 #@! TF.CreationDate,2021-12-23T16:25:37+00:00*
-G04 #@! TF.ProjectId,pinanococ-keyboard,70696e61-6e6f-4636-9f63-2d6b6579626f,rev?*
+G04 #@! TF.ProjectId,pinanochoc-keyboard,70696e61-6e6f-4636-9f63-2d6b6579626f,rev?*
 G04 #@! TF.SameCoordinates,Original*
 G04 #@! TF.FileFunction,Soldermask,Top*
 G04 #@! TF.FilePolarity,Negative*

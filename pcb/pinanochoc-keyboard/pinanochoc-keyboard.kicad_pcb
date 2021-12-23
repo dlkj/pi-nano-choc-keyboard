@@ -5881,10 +5881,10 @@
     )
   )
 
-  (gr_text "pinacochoc v0.1\n@DLKJ" (at 68.5 102.25) (layer B.SilkS) (tstamp 61C67DC6)
+  (gr_text "pinanochoc v0.1\n@DLKJ" (at 68.5 102.25) (layer B.SilkS) (tstamp 61C67DC6)
     (effects (font (size 1.5 1.5) (thickness 0.15)) (justify mirror))
   )
-  (gr_text "pinacochoc v0.1\n@DLKJ" (at 68.75 102.5) (layer F.SilkS)
+  (gr_text "pinanochoc v0.1\n@DLKJ" (at 68.75 102.5) (layer F.SilkS)
     (effects (font (size 1.5 1.5) (thickness 0.15)))
   )
   (gr_text JLCJLCJLCJLC (at 143.75 69 90) (layer F.SilkS)
