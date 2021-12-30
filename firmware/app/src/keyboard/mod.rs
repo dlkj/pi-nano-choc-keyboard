@@ -1,9 +1,9 @@
-use embedded_hal::digital::v2::OutputPin;
+use crate::debounce::DebouncedPin;
 use crate::keyboard::keycode::KeyCode;
 use crate::keyboard::keycode::Modifiers;
 use arrayvec::ArrayVec;
-use crate::debounce::DebouncedPin;
 use embedded_hal::digital::v2::InputPin;
+use embedded_hal::digital::v2::OutputPin;
 
 pub mod keycode;
 
@@ -66,7 +66,7 @@ pub struct DiodePinMatrix<PO, P> {
 }
 
 impl<PO, P> DiodePinMatrix<PO, P> {
-    pub fn new(mut rows: [PO; 6], cols: [P;6]) -> DiodePinMatrix<PO, P>
+    pub fn new(mut rows: [PO; 6], cols: [P; 6]) -> DiodePinMatrix<PO, P>
     where
         P: InputPin,
         PO: OutputPin,
@@ -75,10 +75,7 @@ impl<PO, P> DiodePinMatrix<PO, P> {
             r.set_low().ok();
         }
 
-        DiodePinMatrix {
-            rows,
-            cols
-        }
+        DiodePinMatrix { rows, cols }
     }
 }
 
@@ -97,7 +94,6 @@ where
         let mut i = 0;
 
         for r in &mut self.rows {
-
             r.set_high().unwrap();
 
             //allow time for output to stabilise beore scanning columns
@@ -107,7 +103,7 @@ where
 
             for c in &self.cols {
                 keystates[i].pressed = c.is_high().unwrap();
-                i+=1;
+                i += 1;
             }
             r.set_low().unwrap();
         }

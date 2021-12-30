@@ -3,48 +3,58 @@
 
 //USB serial console (minicom -b 115200 -o -D /dev/ttyACM0)
 
+mod debounce;
 mod keyboard;
 mod logger;
+mod oled_display;
 mod panic;
 mod rotary_enc;
 mod usb;
-mod debounce;
 
-
-use embedded_hal::digital::v2::ToggleableOutputPin;
-use embedded_time::duration::Extensions;
-use embedded_time::fixed_point::FixedPoint;
-use rp_pico::{
-    hal::{
-        self as rp2040_hal,
-        Clock,
-        pac::{self, interrupt},
-        sio::Sio,
-        timer::Timer,
-        watchdog::Watchdog,
-    },
-    Pins,
-};
 use core::cell::RefCell;
+use core::fmt::Write;
 use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
+use embedded_hal::digital::v2::OutputPin;
+use embedded_hal::digital::v2::ToggleableOutputPin;
 use embedded_hal::prelude::*;
+use embedded_time::duration::Extensions;
+use embedded_time::fixed_point::FixedPoint;
 use keyboard::keycode::KeyCode;
 use keyboard::Keyboard;
 use log::{info, LevelFilter};
 use rp2040_hal::gpio::dynpin::DynPin;
+use rp_pico::{
+    hal::{
+        self as rp2040_hal,
+        gpio::{bank0::*, Function, Pin, I2C},
+        pac::{self, interrupt},
+        sio::Sio,
+        timer::Timer,
+        watchdog::Watchdog,
+        Clock,
+    },
+    Pins,
+};
+use ssd1306::{prelude::*, size::DisplaySize128x32, I2CDisplayInterface, Ssd1306};
 use usb_device::class_prelude::*;
 use usbd_hid::descriptor::KeyboardReport;
-use embedded_hal::digital::v2::OutputPin;
-
 
 #[link_section = ".boot2"]
 #[used]
 pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GD25Q64CS;
 
+type OledDisplay = oled_display::OledDisplay<
+    I2CInterface<
+        rp2040_hal::I2C<pac::I2C1, (Pin<Gpio14, Function<I2C>>, Pin<Gpio15, Function<I2C>>)>,
+    >,
+    DisplaySize128x32,
+>;
+
 static USB_MANAGER: Mutex<RefCell<Option<usb::UsbManager<rp2040_hal::usb::UsbBus>>>> =
     Mutex::new(RefCell::new(None));
 static LOGGER: logger::MacropadLogger = logger::MacropadLogger;
+static OLED_DISPLAY: Mutex<RefCell<Option<OledDisplay>>> = Mutex::new(RefCell::new(None));
 
 #[entry]
 fn main() -> ! {
@@ -75,13 +85,35 @@ fn main() -> ! {
         sio.gpio_bank0,
         &mut pac.RESETS,
     );
-    
+
     cortex_m::interrupt::free(|cs| {
-        // Note (safety): interupts not yet enabled
+        //Init display
+        let scl_pin = pins.gpio15.into_mode::<rp2040_hal::gpio::FunctionI2C>();
+        let sda_pin = pins.gpio14.into_mode::<rp2040_hal::gpio::FunctionI2C>();
+
+        let i2c = rp2040_hal::I2C::i2c1(
+            pac.I2C1,
+            sda_pin,
+            scl_pin,
+            embedded_time::rate::Extensions::kHz(400),
+            &mut pac.RESETS,
+            clocks.peripheral_clock,
+        );
+
+        let interface = I2CDisplayInterface::new(i2c);
+        let mut display = Ssd1306::new(interface, DisplaySize128x32, DisplayRotation::Rotate90)
+            .into_buffered_graphics_mode();
+        display.init().unwrap();
+        display.flush().unwrap();
+
+        OLED_DISPLAY
+            .borrow(cs)
+            .replace(Some(oled_display::OledDisplay::new(display)));
 
         //Init USB
         static mut USB_BUS: Option<UsbBusAllocator<rp2040_hal::usb::UsbBus>> = None;
 
+        // Note (safety): interupts not yet enabled
         unsafe {
             USB_BUS = Some(UsbBusAllocator::new(rp2040_hal::usb::UsbBus::new(
                 pac.USBCTRL_REGS,
@@ -105,6 +137,13 @@ fn main() -> ! {
     unsafe {
         pac::NVIC::unmask(rp2040_hal::pac::Interrupt::USBCTRL_IRQ);
     };
+
+    // Slash screen
+    cortex_m::interrupt::free(|cs| {
+        let mut oled_display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
+        let oled_display = oled_display_ref.as_mut().unwrap();
+        oled_display.draw_text_screen("Starting...").unwrap();
+    });
 
     let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer());
     delay.delay_ms(2000);
@@ -142,7 +181,9 @@ fn main() -> ! {
 
     //keypad, final row: '0', '.', 'enter'
     const KEY_MAP: [keyboard::KeyAction; 36] = [
-        keyboard::KeyAction::Key { code: KeyCode::Escape },
+        keyboard::KeyAction::Key {
+            code: KeyCode::Escape,
+        },
         keyboard::KeyAction::Key { code: KeyCode::Kb1 },
         keyboard::KeyAction::Key { code: KeyCode::Kb2 },
         keyboard::KeyAction::Key { code: KeyCode::Kb3 },
@@ -154,31 +195,48 @@ fn main() -> ! {
         keyboard::KeyAction::Key { code: KeyCode::E },
         keyboard::KeyAction::Key { code: KeyCode::R },
         keyboard::KeyAction::Key { code: KeyCode::T },
-        keyboard::KeyAction::Key { code: KeyCode::BackslashISO },
+        keyboard::KeyAction::Key {
+            code: KeyCode::BackslashISO,
+        },
         keyboard::KeyAction::Key { code: KeyCode::A },
         keyboard::KeyAction::Key { code: KeyCode::S },
         keyboard::KeyAction::Key { code: KeyCode::D },
         keyboard::KeyAction::Key { code: KeyCode::F },
         keyboard::KeyAction::Key { code: KeyCode::G },
-        keyboard::KeyAction::Key { code: KeyCode::LeftShift },
+        keyboard::KeyAction::Key {
+            code: KeyCode::LeftShift,
+        },
         keyboard::KeyAction::Key { code: KeyCode::Z },
         keyboard::KeyAction::Key { code: KeyCode::X },
         keyboard::KeyAction::Key { code: KeyCode::C },
         keyboard::KeyAction::Key { code: KeyCode::V },
         keyboard::KeyAction::Key { code: KeyCode::B },
-        keyboard::KeyAction::Key { code: KeyCode::LeftControl },
-        keyboard::KeyAction::Key { code: KeyCode::LeftGUI },
+        keyboard::KeyAction::Key {
+            code: KeyCode::LeftControl,
+        },
+        keyboard::KeyAction::Key {
+            code: KeyCode::LeftGUI,
+        },
         keyboard::KeyAction::Key { code: KeyCode::Kb7 },
         keyboard::KeyAction::Key { code: KeyCode::Kb8 },
-        keyboard::KeyAction::Key { code: KeyCode::Backspace },
-        keyboard::KeyAction::Key { code: KeyCode::LeftBracket },
-        keyboard::KeyAction::Key { code: KeyCode::None },
-        keyboard::KeyAction::Key { code: KeyCode::LeftAlt },
+        keyboard::KeyAction::Key {
+            code: KeyCode::Backspace,
+        },
+        keyboard::KeyAction::Key {
+            code: KeyCode::LeftBracket,
+        },
+        keyboard::KeyAction::Key {
+            code: KeyCode::None,
+        },
+        keyboard::KeyAction::Key {
+            code: KeyCode::LeftAlt,
+        },
         keyboard::KeyAction::Key { code: KeyCode::Kb9 },
         keyboard::KeyAction::Key { code: KeyCode::Kb0 },
-        keyboard::KeyAction::Key { code: KeyCode::Spacebar },
+        keyboard::KeyAction::Key {
+            code: KeyCode::Spacebar,
+        },
         keyboard::KeyAction::Key { code: KeyCode::Y },
-
     ];
 
     let mut keyboard = Keyboard::new(
@@ -193,12 +251,11 @@ fn main() -> ! {
     slow_countdown.start(20.milliseconds());
 
     let mut led_pin = pins.led.into_readable_output();
-    
+
     info!("Running main loop");
     loop {
         //0.1ms scan the keys and debounce
         if fast_countdown.wait().is_ok() {
-
             let (p_a, p_b) = rot_enc.pins_borrow_mut();
             p_a.update().expect("Failed to update rot a debouncer");
             p_b.update().expect("Failed to update rot b debouncer");
@@ -224,6 +281,23 @@ fn main() -> ! {
                     usb.keyboard_borrow_mut().push_input(&keyboard_report).ok();
                 }
             });
+
+            let mut output = arrayvec::ArrayString::<1024>::new();
+            if write!(
+                &mut output,
+                "k:\n{:#04X?}\n\nm:\n{:08b}",
+                keyboard_report.keycodes, keyboard_report.modifier
+            )
+            .ok()
+            .is_some()
+            {
+                cortex_m::interrupt::free(|cs| {
+                    let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
+                    if let Some(display) = display_ref.as_mut() {
+                        display.draw_text_screen(output.as_str()).ok();
+                    }
+                });
+            }
         }
     }
 }
