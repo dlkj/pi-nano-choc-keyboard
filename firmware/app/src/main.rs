@@ -11,6 +11,7 @@ mod usb;
 mod debounce;
 
 
+use embedded_hal::digital::v2::ToggleableOutputPin;
 use embedded_time::duration::Extensions;
 use embedded_time::fixed_point::FixedPoint;
 use rp_pico::{
@@ -117,7 +118,7 @@ fn main() -> ! {
 
     let mut rot_enc = rotary_enc::RotaryEncoder::new(rot_pin_a, rot_pin_b);
 
-    let kb_pins: [DynPin; 6] = [
+    let cols: [DynPin; 6] = [
         pins.gpio20.into_pull_down_input().into(),
         pins.gpio21.into_pull_down_input().into(),
         pins.gpio22.into_pull_down_input().into(),
@@ -126,26 +127,62 @@ fn main() -> ! {
         pins.gpio28.into_pull_down_input().into(),
     ];
 
-    pins.gpio5.into_push_pull_output().set_high().unwrap();
-    pins.gpio6.into_push_pull_output().set_high().unwrap();
-    pins.gpio7.into_push_pull_output().set_high().unwrap();
-    pins.gpio9.into_push_pull_output().set_high().unwrap();
-    pins.gpio10.into_push_pull_output().set_high().unwrap();
-    pins.gpio11.into_push_pull_output().set_high().unwrap();
+    let mut rows: [DynPin; 6] = [
+        pins.gpio5.into_push_pull_output().into(),
+        pins.gpio6.into_push_pull_output().into(),
+        pins.gpio7.into_push_pull_output().into(),
+        pins.gpio9.into_push_pull_output().into(),
+        pins.gpio10.into_push_pull_output().into(),
+        pins.gpio11.into_push_pull_output().into(),
+    ];
+
+    for p in &mut rows {
+        p.set_low().unwrap();
+    }
 
     //keypad, final row: '0', '.', 'enter'
-    const KEY_MAP: [keyboard::KeyAction; 6] = [
-        keyboard::KeyAction::Key { code: KeyCode::Kp0 },
-        keyboard::KeyAction::Key { code: KeyCode::Kp1 },
-        keyboard::KeyAction::Key { code: KeyCode::Kp2 },
-        keyboard::KeyAction::Key { code: KeyCode::Kp3 },
-        keyboard::KeyAction::Key { code: KeyCode::Kp4 },
-        keyboard::KeyAction::Key { code: KeyCode::Kp5 },
+    const KEY_MAP: [keyboard::KeyAction; 36] = [
+        keyboard::KeyAction::Key { code: KeyCode::Escape },
+        keyboard::KeyAction::Key { code: KeyCode::Kb1 },
+        keyboard::KeyAction::Key { code: KeyCode::Kb2 },
+        keyboard::KeyAction::Key { code: KeyCode::Kb3 },
+        keyboard::KeyAction::Key { code: KeyCode::Kb4 },
+        keyboard::KeyAction::Key { code: KeyCode::Kb5 },
+        keyboard::KeyAction::Key { code: KeyCode::Tab },
+        keyboard::KeyAction::Key { code: KeyCode::Q },
+        keyboard::KeyAction::Key { code: KeyCode::W },
+        keyboard::KeyAction::Key { code: KeyCode::E },
+        keyboard::KeyAction::Key { code: KeyCode::R },
+        keyboard::KeyAction::Key { code: KeyCode::T },
+        keyboard::KeyAction::Key { code: KeyCode::BackslashISO },
+        keyboard::KeyAction::Key { code: KeyCode::A },
+        keyboard::KeyAction::Key { code: KeyCode::S },
+        keyboard::KeyAction::Key { code: KeyCode::D },
+        keyboard::KeyAction::Key { code: KeyCode::F },
+        keyboard::KeyAction::Key { code: KeyCode::G },
+        keyboard::KeyAction::Key { code: KeyCode::LeftShift },
+        keyboard::KeyAction::Key { code: KeyCode::Z },
+        keyboard::KeyAction::Key { code: KeyCode::X },
+        keyboard::KeyAction::Key { code: KeyCode::C },
+        keyboard::KeyAction::Key { code: KeyCode::V },
+        keyboard::KeyAction::Key { code: KeyCode::B },
+        keyboard::KeyAction::Key { code: KeyCode::LeftControl },
+        keyboard::KeyAction::Key { code: KeyCode::LeftGUI },
+        keyboard::KeyAction::Key { code: KeyCode::Kb7 },
+        keyboard::KeyAction::Key { code: KeyCode::Kb8 },
+        keyboard::KeyAction::Key { code: KeyCode::Backspace },
+        keyboard::KeyAction::Key { code: KeyCode::LeftBracket },
+        keyboard::KeyAction::Key { code: KeyCode::None },
+        keyboard::KeyAction::Key { code: KeyCode::LeftAlt },
+        keyboard::KeyAction::Key { code: KeyCode::Kb9 },
+        keyboard::KeyAction::Key { code: KeyCode::Kb0 },
+        keyboard::KeyAction::Key { code: KeyCode::Spacebar },
+        keyboard::KeyAction::Key { code: KeyCode::Y },
 
     ];
 
     let mut keyboard = Keyboard::new(
-        keyboard::DirectPinMatrix::new(kb_pins),
+        keyboard::DiodePinMatrix::new(rows, cols),
         keyboard::BasicKeyboardLayout::new(KEY_MAP),
     );
 
@@ -155,10 +192,13 @@ fn main() -> ! {
     let mut slow_countdown = timer.count_down();
     slow_countdown.start(20.milliseconds());
 
+    let mut led_pin = pins.led.into_readable_output();
+    
     info!("Running main loop");
     loop {
         //0.1ms scan the keys and debounce
         if fast_countdown.wait().is_ok() {
+
             let (p_a, p_b) = rot_enc.pins_borrow_mut();
             p_a.update().expect("Failed to update rot a debouncer");
             p_b.update().expect("Failed to update rot b debouncer");
@@ -171,8 +211,10 @@ fn main() -> ! {
 
         //10ms
         if slow_countdown.wait().is_ok() {
+            led_pin.toggle().unwrap();
+
             //100Hz or slower
-            let keyboard_state = keyboard.state().expect("Failed to get Keyboard state");
+            let keyboard_state = keyboard.state().unwrap();
             let keyboard_report = get_hid_report(&keyboard_state);
 
             //todo - spin lock until usb ready to recive, reset timers

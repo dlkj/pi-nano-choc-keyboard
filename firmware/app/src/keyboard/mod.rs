@@ -1,3 +1,4 @@
+use embedded_hal::digital::v2::OutputPin;
 use crate::keyboard::keycode::KeyCode;
 use crate::keyboard::keycode::Modifiers;
 use arrayvec::ArrayVec;
@@ -18,7 +19,7 @@ pub struct KeyState {
 pub trait KeyboardMatrix<const KEY_COUNT: usize> {
     type Error;
     fn update(&mut self) -> Result<(), Self::Error>;
-    fn keys(&self) -> Result<[KeyState; KEY_COUNT], Self::Error>;
+    fn keys(&mut self) -> Result<[KeyState; KEY_COUNT], Self::Error>;
 }
 
 pub struct DirectPinMatrix<P, const N: usize> {
@@ -42,7 +43,7 @@ where
 {
     type Error = P::Error;
 
-    fn keys(&self) -> Result<[KeyState; N], Self::Error> {
+    fn keys(&mut self) -> Result<[KeyState; N], Self::Error> {
         let mut keystates = [KeyState::default(); N];
 
         for (i, p) in self.pins.iter().enumerate() {
@@ -55,6 +56,65 @@ where
         for p in &mut self.pins {
             p.update()?;
         }
+        Ok(())
+    }
+}
+
+pub struct DiodePinMatrix<PO, P> {
+    rows: [PO; 6],
+    cols: [P; 6],
+}
+
+impl<PO, P> DiodePinMatrix<PO, P> {
+    pub fn new(mut rows: [PO; 6], cols: [P;6]) -> DiodePinMatrix<PO, P>
+    where
+        P: InputPin,
+        PO: OutputPin,
+    {
+        for r in &mut rows {
+            r.set_low().ok();
+        }
+
+        DiodePinMatrix {
+            rows,
+            cols
+        }
+    }
+}
+
+impl<PO, P> KeyboardMatrix<36> for DiodePinMatrix<PO, P>
+where
+    P: InputPin,
+    PO: OutputPin,
+    P::Error: core::fmt::Debug,
+    PO::Error: core::fmt::Debug,
+{
+    type Error = P::Error;
+
+    fn keys(&mut self) -> Result<[KeyState; 36], Self::Error> {
+        let mut keystates = [KeyState::default(); 36];
+
+        let mut i = 0;
+
+        for r in &mut self.rows {
+
+            r.set_high().unwrap();
+
+            //allow time for output to stabilise beore scanning columns
+            for _ in 0..10 {
+                cortex_m::asm::nop();
+            }
+
+            for c in &self.cols {
+                keystates[i].pressed = c.is_high().unwrap();
+                i+=1;
+            }
+            r.set_low().unwrap();
+        }
+        Ok(keystates)
+    }
+
+    fn update(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
 }
@@ -124,7 +184,7 @@ where
     pub fn update(&mut self) -> Result<(), KM::Error> {
         self.matrix.update()
     }
-    pub fn state(&self) -> Result<KeyboardState<KEY_COUNT>, KM::Error> {
+    pub fn state(&mut self) -> Result<KeyboardState<KEY_COUNT>, KM::Error> {
         let keys = self.matrix.keys()?;
         let layout_state = self.layout.state(&keys);
 

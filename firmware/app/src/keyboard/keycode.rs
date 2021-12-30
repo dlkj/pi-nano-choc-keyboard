@@ -30,8 +30,8 @@ pub enum KeyCode {
     Q,                   //0x14
     R,                   //0x15
     S,                   //0x16
-    U,                   //0x18
-    T,                   //0x17
+    T,                   //0x18
+    U,                   //0x17
     V,                   //0x19
     W,                   //0x1A
     X,                   //0x1B
