@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "left",
+    "right",
 ]
 
 # cargo build/run
