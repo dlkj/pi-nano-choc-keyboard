@@ -25,7 +25,6 @@ where
     SIZE: ssd1306::mode::TerminalDisplaySize,
 {
     display: Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>,
-    //Ssd1306<ssd1306::prelude::I2CInterface<rp_pico::rp2040_hal::I2C<rp_pico::rp2040_pac::I2C1, (rp_pico::rp2040_hal::gpio::Pin<rp_pico::rp2040_hal::gpio::bank0::Gpio14, rp_pico::rp2040_hal::gpio::Function<rp_pico::rp2040_hal::gpio::I2C>>, rp_pico::rp2040_hal::gpio::Pin<rp_pico::rp2040_hal::gpio::bank0::Gpio15, rp_pico::rp2040_hal::gpio::Function<rp_pico::rp2040_hal::gpio::I2C>>)>>, ssd1306::prelude::DisplaySize128x32, ssd1306::mode::TerminalMode>
 }
 
 impl<DI, SIZE> OledDisplay<DI, SIZE>

@@ -3,11 +3,16 @@
 
 //USB serial console (minicom -b 115200 -o -D /dev/ttyACM0)
 
-use app::usb::UsbManager;
-use app::rotary_enc::RotaryEncoder;
 use app::debounce::DebouncedPin;
+use app::keyboard::keycode::KeyCode;
+use app::keyboard::Keyboard;
 use app::keyboard::*;
+use app::rotary_enc::RotaryEncoder;
+use app::usb::UsbManager;
 use core::cell::RefCell;
+use core::panic::PanicInfo;
+use core::sync::atomic::{self, Ordering};
+use core::{fmt, fmt::Write};
 use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
 use embedded_hal::digital::v2::OutputPin;
@@ -15,9 +20,8 @@ use embedded_hal::digital::v2::ToggleableOutputPin;
 use embedded_hal::prelude::*;
 use embedded_time::duration::Extensions;
 use embedded_time::fixed_point::FixedPoint;
-use app::keyboard::keycode::KeyCode;
-use app::keyboard::Keyboard;
-use log::{info, error, LevelFilter};
+use log::{error, info, LevelFilter};
+use log::{Level, Metadata, Record};
 use rp2040_hal::gpio::dynpin::DynPin;
 use rp_pico::{
     hal::{
@@ -34,11 +38,6 @@ use rp_pico::{
 use ssd1306::{prelude::*, size::DisplaySize128x32, I2CDisplayInterface, Ssd1306};
 use usb_device::class_prelude::*;
 use usbd_hid::descriptor::KeyboardReport;
-use core::{fmt, fmt::Write};
-use log::{Level, Metadata, Record};
-use core::panic::PanicInfo;
-use core::sync::atomic::{self, Ordering};
-
 
 #[link_section = ".boot2"]
 #[used]
@@ -150,10 +149,8 @@ fn main() -> ! {
 
     info!("macropad starting");
 
-    let rot_pin_a =
-        DebouncedPin::<DynPin>::new(pins.gpio16.into_pull_up_input().into(), true);
-    let rot_pin_b =
-        DebouncedPin::<DynPin>::new(pins.gpio17.into_pull_up_input().into(), true);
+    let rot_pin_a = DebouncedPin::<DynPin>::new(pins.gpio16.into_pull_up_input().into(), true);
+    let rot_pin_b = DebouncedPin::<DynPin>::new(pins.gpio17.into_pull_up_input().into(), true);
 
     let mut rot_enc = RotaryEncoder::new(rot_pin_a, rot_pin_b);
 

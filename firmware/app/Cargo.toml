@@ -1,15 +1,18 @@
 [package]
 authors = ["Daniel KJ"]
 edition = "2021"
-name = "left"
+name = "app"
 version = "0.1.0"
 
+[lib]
+name = "app"
+
 # makes `cargo check --all-targets` work
-[[bin]]
-name = "left"
-bench = false
-doctest = false
-test = false
+# [[bin]]
+# name = "left"
+# bench = false
+# doctest = false
+# test = false
 
 [dependencies]
 cortex-m = "0.7.3"
