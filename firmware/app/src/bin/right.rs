@@ -178,60 +178,60 @@ fn main() -> ! {
 
     //keypad, final row: '0', '.', 'enter'
     const KEY_MAP: [KeyAction; 36] = [
-        KeyAction::Key {
-            code: KeyCode::Escape,
-        },
-        KeyAction::Key { code: KeyCode::Kb1 },
-        KeyAction::Key { code: KeyCode::Kb2 },
-        KeyAction::Key { code: KeyCode::Kb3 },
-        KeyAction::Key { code: KeyCode::Kb4 },
-        KeyAction::Key { code: KeyCode::Kb5 },
-        KeyAction::Key { code: KeyCode::Tab },
-        KeyAction::Key { code: KeyCode::Q },
-        KeyAction::Key { code: KeyCode::W },
-        KeyAction::Key { code: KeyCode::E },
-        KeyAction::Key { code: KeyCode::R },
-        KeyAction::Key { code: KeyCode::T },
-        KeyAction::Key {
-            code: KeyCode::BackslashISO,
-        },
-        KeyAction::Key { code: KeyCode::A },
-        KeyAction::Key { code: KeyCode::S },
-        KeyAction::Key { code: KeyCode::D },
-        KeyAction::Key { code: KeyCode::F },
-        KeyAction::Key { code: KeyCode::G },
-        KeyAction::Key {
-            code: KeyCode::LeftShift,
-        },
-        KeyAction::Key { code: KeyCode::Z },
-        KeyAction::Key { code: KeyCode::X },
-        KeyAction::Key { code: KeyCode::C },
-        KeyAction::Key { code: KeyCode::V },
-        KeyAction::Key { code: KeyCode::B },
-        KeyAction::Key {
-            code: KeyCode::LeftControl,
-        },
-        KeyAction::Key {
-            code: KeyCode::LeftGUI,
-        },
+        KeyAction::Key { code: KeyCode::Kb6 },
         KeyAction::Key { code: KeyCode::Kb7 },
         KeyAction::Key { code: KeyCode::Kb8 },
+        KeyAction::Key { code: KeyCode::Kb9 },
+        KeyAction::Key { code: KeyCode::Kb0 },
+        KeyAction::Key {
+            code: KeyCode::RightBracket,
+        },
+        KeyAction::Key { code: KeyCode::Y },
+        KeyAction::Key { code: KeyCode::U },
+        KeyAction::Key { code: KeyCode::I },
+        KeyAction::Key { code: KeyCode::O },
+        KeyAction::Key { code: KeyCode::P },
+        KeyAction::Key {
+            code: KeyCode::LeftBracket,
+        },
+        KeyAction::Key { code: KeyCode::H },
+        KeyAction::Key { code: KeyCode::J },
+        KeyAction::Key { code: KeyCode::K },
+        KeyAction::Key { code: KeyCode::L },
+        KeyAction::Key { code: KeyCode::Semicolon },
+        KeyAction::Key { code: KeyCode::Apostrophy },
+        KeyAction::Key {
+            code: KeyCode::N,
+        },
+        KeyAction::Key { code: KeyCode::M },
+        KeyAction::Key { code: KeyCode::Comma },
+        KeyAction::Key { code: KeyCode::Dot },
+        KeyAction::Key { code: KeyCode::ForwardSlash },
+        KeyAction::Key { code: KeyCode::RightShift },
+        KeyAction::Key {
+            code: KeyCode::RightBracket,
+        },
+        KeyAction::Key {
+            code: KeyCode::Kp1,
+        },
+        KeyAction::Key { code: KeyCode::Kb2 },
+        KeyAction::Key { code: KeyCode::Kb3 },
+        KeyAction::Key {
+            code: KeyCode::Application,
+        },
+        KeyAction::Key { code: KeyCode::RightControl },
+        KeyAction::Key {
+            code: KeyCode::Kp5,
+        },
+        KeyAction::Key { code: KeyCode::Kb6 },
+        KeyAction::Key { code: KeyCode::Enter },
         KeyAction::Key {
             code: KeyCode::Backspace,
         },
         KeyAction::Key {
-            code: KeyCode::LeftBracket,
+            code: KeyCode::RightAlt,
         },
-        KeyAction::Key { code: KeyCode::J },
-        KeyAction::Key {
-            code: KeyCode::LeftAlt,
-        },
-        KeyAction::Key { code: KeyCode::Kb9 },
-        KeyAction::Key { code: KeyCode::Kb0 },
-        KeyAction::Key {
-            code: KeyCode::Spacebar,
-        },
-        KeyAction::Key { code: KeyCode::Y },
+        KeyAction::Key { code: KeyCode::None },
     ];
 
     let mut keyboard = Keyboard::new(

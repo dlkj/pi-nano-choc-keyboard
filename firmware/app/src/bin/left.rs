@@ -229,9 +229,9 @@ fn main() -> ! {
             code: KeyCode::LeftAlt,
         },
         KeyAction::Key { code: KeyCode::Kb9 },
-        KeyAction::Key { code: KeyCode::Kb0 },
+        KeyAction::Key { code: KeyCode::Spacebar },
         KeyAction::Key {
-            code: KeyCode::Spacebar,
+            code: KeyCode::Kb0,
         },
         KeyAction::Key { code: KeyCode::Y },
     ];
