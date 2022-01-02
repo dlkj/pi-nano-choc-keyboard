@@ -3,12 +3,9 @@
 
 //USB serial console (minicom -b 115200 -o -D /dev/ttyACM0)
 
-use app::debounce::DebouncedPin;
 use app::keyboard::keycode::KeyCode;
-use app::keyboard::Keyboard;
-use app::keyboard::*;
-use app::rotary_enc::RotaryEncoder;
 use app::usb::UsbManager;
+use app::{keyboard::*, KeyboardRuntime};
 use core::cell::RefCell;
 use core::panic::PanicInfo;
 use core::sync::atomic::{self, Ordering};
@@ -16,54 +13,113 @@ use core::{fmt, fmt::Write};
 use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
 use embedded_hal::digital::v2::OutputPin;
-use embedded_hal::digital::v2::ToggleableOutputPin;
-use embedded_hal::prelude::*;
-use embedded_time::duration::Extensions;
-use embedded_time::fixed_point::FixedPoint;
-use log::{error, info, LevelFilter};
+use log::{error, LevelFilter};
 use log::{Level, Metadata, Record};
-use rp2040_hal::gpio::dynpin::DynPin;
+use rp_pico::hal;
+use rp_pico::hal::clocks::{self, ClocksManager};
+use rp_pico::hal::gpio::I2C;
 use rp_pico::{
     hal::{
-        self as rp2040_hal,
-        gpio::{bank0::*, Function, Pin, I2C},
+        gpio::{bank0::*, DynPin, Function, Pin},
         pac::{self, interrupt},
         sio::Sio,
         timer::Timer,
         watchdog::Watchdog,
-        Clock,
     },
     Pins,
 };
 use ssd1306::{prelude::*, size::DisplaySize128x32, I2CDisplayInterface, Ssd1306};
 use usb_device::class_prelude::*;
-use usbd_hid::descriptor::KeyboardReport;
 
 #[link_section = ".boot2"]
 #[used]
 pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GD25Q64CS;
 
 type OledDisplay = app::oled_display::OledDisplay<
-    I2CInterface<
-        rp2040_hal::I2C<pac::I2C0, (Pin<Gpio16, Function<I2C>>, Pin<Gpio17, Function<I2C>>)>,
-    >,
+    I2CInterface<hal::I2C<pac::I2C0, (Pin<Gpio16, Function<I2C>>, Pin<Gpio17, Function<I2C>>)>>,
     DisplaySize128x32,
 >;
 
-static USB_MANAGER: Mutex<RefCell<Option<UsbManager<rp2040_hal::usb::UsbBus>>>> =
+static USB_MANAGER: Mutex<RefCell<Option<UsbManager<hal::usb::UsbBus>>>> =
     Mutex::new(RefCell::new(None));
-static LOGGER: MacropadLogger = MacropadLogger;
+static LOGGER: Logger = Logger {};
 static OLED_DISPLAY: Mutex<RefCell<Option<OledDisplay>>> = Mutex::new(RefCell::new(None));
+
+const KEY_MAP: [KeyAction; 36] = [
+    KeyAction::Key { code: KeyCode::Kb6 },
+    KeyAction::Key { code: KeyCode::Kb7 },
+    KeyAction::Key { code: KeyCode::Kb8 },
+    KeyAction::Key { code: KeyCode::Kb9 },
+    KeyAction::Key { code: KeyCode::Kb0 },
+    KeyAction::Key {
+        code: KeyCode::RightBracket,
+    },
+    KeyAction::Key { code: KeyCode::Y },
+    KeyAction::Key { code: KeyCode::U },
+    KeyAction::Key { code: KeyCode::I },
+    KeyAction::Key { code: KeyCode::O },
+    KeyAction::Key { code: KeyCode::P },
+    KeyAction::Key {
+        code: KeyCode::LeftBracket,
+    },
+    KeyAction::Key { code: KeyCode::H },
+    KeyAction::Key { code: KeyCode::J },
+    KeyAction::Key { code: KeyCode::K },
+    KeyAction::Key { code: KeyCode::L },
+    KeyAction::Key {
+        code: KeyCode::Semicolon,
+    },
+    KeyAction::Key {
+        code: KeyCode::Apostrophy,
+    },
+    KeyAction::Key { code: KeyCode::N },
+    KeyAction::Key { code: KeyCode::M },
+    KeyAction::Key {
+        code: KeyCode::Comma,
+    },
+    KeyAction::Key { code: KeyCode::Dot },
+    KeyAction::Key {
+        code: KeyCode::ForwardSlash,
+    },
+    KeyAction::Key {
+        code: KeyCode::RightShift,
+    },
+    KeyAction::Key {
+        code: KeyCode::RightBracket,
+    },
+    KeyAction::Key { code: KeyCode::Kp1 },
+    KeyAction::Key { code: KeyCode::Kb2 },
+    KeyAction::Key { code: KeyCode::Kb3 },
+    KeyAction::Key {
+        code: KeyCode::Application,
+    },
+    KeyAction::Key {
+        code: KeyCode::RightControl,
+    },
+    KeyAction::Key { code: KeyCode::Kp5 },
+    KeyAction::Key {
+        code: KeyCode::Enter,
+    },
+    KeyAction::Key {
+        code: KeyCode::Backspace,
+    },
+    KeyAction::Key { code: KeyCode::Kb6 },
+    KeyAction::Key {
+        code: KeyCode::RightAlt,
+    },
+    KeyAction::Key {
+        code: KeyCode::None,
+    },
+];
 
 #[entry]
 fn main() -> ! {
     let mut pac = pac::Peripherals::take().unwrap();
-    let core = pac::CorePeripherals::take().unwrap();
 
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
 
     let external_xtal_freq_hz = 12_000_000u32;
-    let clocks: rp2040_hal::clocks::ClocksManager = rp2040_hal::clocks::init_clocks_and_plls(
+    let clocks: ClocksManager = clocks::init_clocks_and_plls(
         external_xtal_freq_hz,
         pac.XOSC,
         pac.CLOCKS,
@@ -75,8 +131,6 @@ fn main() -> ! {
     .ok()
     .unwrap();
 
-    let timer = Timer::new(pac.TIMER, &mut pac.RESETS);
-
     let sio = Sio::new(pac.SIO);
     let pins = Pins::new(
         pac.IO_BANK0,
@@ -87,10 +141,10 @@ fn main() -> ! {
 
     cortex_m::interrupt::free(|cs| {
         //Init display
-        let scl_pin = pins.gpio17.into_mode::<rp2040_hal::gpio::FunctionI2C>();
-        let sda_pin = pins.gpio16.into_mode::<rp2040_hal::gpio::FunctionI2C>();
+        let scl_pin = pins.gpio17.into_mode::<rp_pico::hal::gpio::FunctionI2C>();
+        let sda_pin = pins.gpio16.into_mode::<rp_pico::hal::gpio::FunctionI2C>();
 
-        let i2c = rp2040_hal::I2C::i2c0(
+        let i2c = rp_pico::hal::i2c::I2C::new_controller(
             pac.I2C0,
             sda_pin,
             scl_pin,
@@ -110,11 +164,11 @@ fn main() -> ! {
             .replace(Some(app::oled_display::OledDisplay::new(display)));
 
         //Init USB
-        static mut USB_BUS: Option<UsbBusAllocator<rp2040_hal::usb::UsbBus>> = None;
+        static mut USB_BUS: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
 
         // Note (safety): interupts not yet enabled
         unsafe {
-            USB_BUS = Some(UsbBusAllocator::new(rp2040_hal::usb::UsbBus::new(
+            USB_BUS = Some(UsbBusAllocator::new(hal::usb::UsbBus::new(
                 pac.USBCTRL_REGS,
                 pac.USBCTRL_DPRAM,
                 clocks.usb_clock,
@@ -134,25 +188,13 @@ fn main() -> ! {
 
     // Enable the USB interrupt
     unsafe {
-        pac::NVIC::unmask(rp2040_hal::pac::Interrupt::USBCTRL_IRQ);
+        pac::NVIC::unmask(hal::pac::Interrupt::USBCTRL_IRQ);
     };
 
-    // Slash screen
-    cortex_m::interrupt::free(|cs| {
-        let mut oled_display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
-        let oled_display = oled_display_ref.as_mut().unwrap();
-        oled_display.draw_text_screen("Starting...").unwrap();
-    });
+    // let rot_pin_a = DebouncedPin::<DynPin>::new(pins.gpio15.into_pull_up_input().into(), true);
+    // let rot_pin_b = DebouncedPin::<DynPin>::new(pins.gpio14.into_pull_up_input().into(), true);
 
-    let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer());
-    delay.delay_ms(2000);
-
-    info!("macropad starting");
-
-    let rot_pin_a = DebouncedPin::<DynPin>::new(pins.gpio15.into_pull_up_input().into(), true);
-    let rot_pin_b = DebouncedPin::<DynPin>::new(pins.gpio14.into_pull_up_input().into(), true);
-
-    let mut rot_enc = RotaryEncoder::new(rot_pin_a, rot_pin_b);
+    // let mut rot_enc = RotaryEncoder::new(rot_pin_a, rot_pin_b);
 
     let cols: [DynPin; 6] = [
         pins.gpio5.into_pull_down_input().into(),
@@ -176,167 +218,25 @@ fn main() -> ! {
         p.set_low().unwrap();
     }
 
-    //keypad, final row: '0', '.', 'enter'
-    const KEY_MAP: [KeyAction; 36] = [
-        KeyAction::Key { code: KeyCode::Kb6 },
-        KeyAction::Key { code: KeyCode::Kb7 },
-        KeyAction::Key { code: KeyCode::Kb8 },
-        KeyAction::Key { code: KeyCode::Kb9 },
-        KeyAction::Key { code: KeyCode::Kb0 },
-        KeyAction::Key {
-            code: KeyCode::RightBracket,
-        },
-        KeyAction::Key { code: KeyCode::Y },
-        KeyAction::Key { code: KeyCode::U },
-        KeyAction::Key { code: KeyCode::I },
-        KeyAction::Key { code: KeyCode::O },
-        KeyAction::Key { code: KeyCode::P },
-        KeyAction::Key {
-            code: KeyCode::LeftBracket,
-        },
-        KeyAction::Key { code: KeyCode::H },
-        KeyAction::Key { code: KeyCode::J },
-        KeyAction::Key { code: KeyCode::K },
-        KeyAction::Key { code: KeyCode::L },
-        KeyAction::Key { code: KeyCode::Semicolon },
-        KeyAction::Key { code: KeyCode::Apostrophy },
-        KeyAction::Key {
-            code: KeyCode::N,
-        },
-        KeyAction::Key { code: KeyCode::M },
-        KeyAction::Key { code: KeyCode::Comma },
-        KeyAction::Key { code: KeyCode::Dot },
-        KeyAction::Key { code: KeyCode::ForwardSlash },
-        KeyAction::Key { code: KeyCode::RightShift },
-        KeyAction::Key {
-            code: KeyCode::RightBracket,
-        },
-        KeyAction::Key {
-            code: KeyCode::Kp1,
-        },
-        KeyAction::Key { code: KeyCode::Kb2 },
-        KeyAction::Key { code: KeyCode::Kb3 },
-        KeyAction::Key {
-            code: KeyCode::Application,
-        },
-        KeyAction::Key { code: KeyCode::RightControl },
-        KeyAction::Key {
-            code: KeyCode::Kp5,
-        },
-        KeyAction::Key { code: KeyCode::Kb6 },
-        KeyAction::Key { code: KeyCode::Enter },
-        KeyAction::Key {
-            code: KeyCode::Backspace,
-        },
-        KeyAction::Key {
-            code: KeyCode::RightAlt,
-        },
-        KeyAction::Key { code: KeyCode::None },
-    ];
+    let timer = Timer::new(pac.TIMER, &mut pac.RESETS);
 
-    let mut keyboard = Keyboard::new(
-        DiodePinMatrix::new(rows, cols),
-        BasicKeyboardLayout::new(KEY_MAP),
-    );
-
-    let mut fast_countdown = timer.count_down();
-    fast_countdown.start(100.nanoseconds());
-
-    let mut slow_countdown = timer.count_down();
-    slow_countdown.start(20.milliseconds());
-
-    let mut led_pin = pins.led.into_readable_output();
-
-    info!("Running main loop");
-    loop {
-        //0.1ms scan the keys and debounce
-        if fast_countdown.wait().is_ok() {
-            let (p_a, p_b) = rot_enc.pins_borrow_mut();
-            p_a.update().expect("Failed to update rot a debouncer");
-            p_b.update().expect("Failed to update rot b debouncer");
-
-            //todo: move onto an interupt timer
-            rot_enc.update();
-
-            keyboard.update().expect("Failed to update keyboard");
-        }
-
-        //10ms
-        if slow_countdown.wait().is_ok() {
-            led_pin.toggle().unwrap();
-
-            //100Hz or slower
-            let keyboard_state = keyboard.state().unwrap();
-            let keyboard_report = get_hid_report(&keyboard_state);
-
-            //todo - spin lock until usb ready to recive, reset timers
-            cortex_m::interrupt::free(|cs| {
-                let mut usb_ref = USB_MANAGER.borrow(cs).borrow_mut();
-                if let Some(usb) = usb_ref.as_mut() {
-                    usb.keyboard_borrow_mut().push_input(&keyboard_report).ok();
-                }
-            });
-
-            let mut output = arrayvec::ArrayString::<1024>::new();
-            if write!(
-                &mut output,
-                "k:\n{:#04X?}\n\nm:\n{:08b}",
-                keyboard_report.keycodes, keyboard_report.modifier
-            )
-            .ok()
-            .is_some()
-            {
-                cortex_m::interrupt::free(|cs| {
-                    let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
-                    if let Some(display) = display_ref.as_mut() {
-                        display.draw_text_screen(output.as_str()).ok();
-                    }
-                });
-            }
-        }
-    }
-}
-
-fn get_hid_report<const N: usize>(state: &KeyboardState<N>) -> KeyboardReport {
-    //get first 6 current keypresses and send to usb
-    let mut keycodes: [u8; 6] = [0, 0, 0, 0, 0, 0];
-
-    let mut keycodes_it = keycodes.iter_mut();
-
-    for k in &state.keycodes {
-        match keycodes_it.next() {
-            Some(kc) => {
-                *kc = *k as u8;
-            }
-            None => {
-                keycodes.fill(0x01); //Error roll over
-                break;
-            }
-        }
-    }
-
-    KeyboardReport {
-        modifier: state.modifiers.bits(),
-        leds: 0,
-        reserved: 0,
-        keycodes,
-    }
+    KeyboardRuntime::run(&OLED_DISPLAY, &USB_MANAGER, timer, KEY_MAP, rows, cols);
 }
 
 #[allow(non_snake_case)]
 #[interrupt]
 fn USBCTRL_IRQ() {
     cortex_m::interrupt::free(|cs| {
-        let mut usb_ref = USB_MANAGER.borrow(cs).borrow_mut();
-        if let Some(usb) = usb_ref.as_mut() {
+        if let Some(usb) = USB_MANAGER.borrow(cs).borrow_mut().as_mut() {
             usb.service_irq();
         }
     });
+    cortex_m::asm::sev();
 }
 
-pub struct MacropadLogger;
+pub struct Logger {}
 
-impl fmt::Write for MacropadLogger {
+impl fmt::Write for Logger {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         cortex_m::interrupt::free(|cs| {
             let mut usb_ref = USB_MANAGER.borrow(cs).borrow_mut();
@@ -354,14 +254,14 @@ impl fmt::Write for MacropadLogger {
     }
 }
 
-impl log::Log for MacropadLogger {
+impl log::Log for Logger {
     fn enabled(&self, metadata: &Metadata) -> bool {
         metadata.level() <= Level::Info
     }
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            let mut writer = MacropadLogger;
+            let mut writer = Logger {};
             //Errors are likely due to serial port not connected, better to swallow failures than panic
             write!(&mut writer, "{} - {}\r\n", record.level(), record.args()).ok();
         }
