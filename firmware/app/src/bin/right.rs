@@ -11,13 +11,15 @@ use core::panic::PanicInfo;
 use core::sync::atomic::{self, Ordering};
 use core::{fmt, fmt::Write};
 use cortex_m::interrupt::Mutex;
+use cortex_m::prelude::_embedded_hal_serial_Read;
 use cortex_m_rt::entry;
 use embedded_hal::digital::v2::OutputPin;
 use log::{error, LevelFilter};
 use log::{Level, Metadata, Record};
-use rp_pico::hal;
 use rp_pico::hal::clocks::{self, ClocksManager};
-use rp_pico::hal::gpio::I2C;
+use rp_pico::hal::gpio::{FunctionUart, I2C};
+use rp_pico::hal::uart::{self, UartPeripheral};
+use rp_pico::hal::{self, Clock};
 use rp_pico::{
     hal::{
         gpio::{bank0::*, DynPin, Function, Pin},
@@ -150,7 +152,7 @@ fn main() -> ! {
             scl_pin,
             embedded_time::rate::Extensions::kHz(400),
             &mut pac.RESETS,
-            clocks.peripheral_clock,
+            clocks.peripheral_clock.freq(),
         );
 
         let interface = I2CDisplayInterface::new(i2c);
@@ -219,6 +221,32 @@ fn main() -> ! {
     }
 
     let timer = Timer::new(pac.TIMER, &mut pac.RESETS);
+
+    let mut _uart = UartPeripheral::<_, _>::new(pac.UART0, &mut pac.RESETS)
+        .enable(
+            uart::common_configs::_115200_8_N_1,
+            clocks.peripheral_clock.freq(),
+        )
+        .unwrap();
+
+    let _tx_pin = pins.gpio12.into_mode::<FunctionUart>();
+    let _rx_pin = pins.gpio13.into_mode::<FunctionUart>();
+    // uart.write_full_blocking(b"Hello World!\r\n");
+
+    // let mut output = arrayvec::ArrayString::<1024>::new();
+    // loop {
+    //     if let Ok(byte) = uart.read() {
+    //         output.push(byte.into());
+    //     }
+    //     else{
+    //         cortex_m::interrupt::free(|cs| {
+    //             let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
+    //             if let Some(display) = display_ref.as_mut() {
+    //                 display.draw_text_screen(output.as_str()).ok();
+    //             }
+    //         });
+    //     }
+    // }
 
     KeyboardRuntime::run(&OLED_DISPLAY, &USB_MANAGER, timer, KEY_MAP, rows, cols);
 }
