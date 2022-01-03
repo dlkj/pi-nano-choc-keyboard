@@ -11,7 +11,6 @@ use core::panic::PanicInfo;
 use core::sync::atomic::{self, Ordering};
 use core::{fmt, fmt::Write};
 use cortex_m::interrupt::Mutex;
-use cortex_m::prelude::_embedded_hal_serial_Read;
 use cortex_m_rt::entry;
 use embedded_hal::digital::v2::OutputPin;
 use log::{error, LevelFilter};
@@ -47,23 +46,26 @@ static USB_MANAGER: Mutex<RefCell<Option<UsbManager<hal::usb::UsbBus>>>> =
 static LOGGER: Logger = Logger {};
 static OLED_DISPLAY: Mutex<RefCell<Option<OledDisplay>>> = Mutex::new(RefCell::new(None));
 
-const KEY_MAP: [KeyAction; 36] = [
+const BASE_MAP: [KeyAction; 36] = [
+    //row 0
     KeyAction::Key { code: KeyCode::Kb6 },
     KeyAction::Key { code: KeyCode::Kb7 },
     KeyAction::Key { code: KeyCode::Kb8 },
     KeyAction::Key { code: KeyCode::Kb9 },
     KeyAction::Key { code: KeyCode::Kb0 },
     KeyAction::Key {
-        code: KeyCode::RightBracket,
+        code: KeyCode::Minus,
     },
+    //row 1
     KeyAction::Key { code: KeyCode::Y },
     KeyAction::Key { code: KeyCode::U },
     KeyAction::Key { code: KeyCode::I },
     KeyAction::Key { code: KeyCode::O },
     KeyAction::Key { code: KeyCode::P },
     KeyAction::Key {
-        code: KeyCode::LeftBracket,
+        code: KeyCode::Equals,
     },
+    //row 2
     KeyAction::Key { code: KeyCode::H },
     KeyAction::Key { code: KeyCode::J },
     KeyAction::Key { code: KeyCode::K },
@@ -74,6 +76,7 @@ const KEY_MAP: [KeyAction; 36] = [
     KeyAction::Key {
         code: KeyCode::Apostrophy,
     },
+    //row 3
     KeyAction::Key { code: KeyCode::N },
     KeyAction::Key { code: KeyCode::M },
     KeyAction::Key {
@@ -86,26 +89,34 @@ const KEY_MAP: [KeyAction; 36] = [
     KeyAction::Key {
         code: KeyCode::RightShift,
     },
+    //row 4
     KeyAction::Key {
         code: KeyCode::RightBracket,
     },
-    KeyAction::Key { code: KeyCode::Kp1 },
-    KeyAction::Key { code: KeyCode::Kb2 },
-    KeyAction::Key { code: KeyCode::Kb3 },
+    KeyAction::None,
+    KeyAction::Key {
+        code: KeyCode::Delete,
+    },
+    KeyAction::Key {
+        code: KeyCode::Hash,
+    },
     KeyAction::Key {
         code: KeyCode::Application,
     },
     KeyAction::Key {
         code: KeyCode::RightControl,
     },
-    KeyAction::Key { code: KeyCode::Kp5 },
+    //row 5
+    KeyAction::Layer { n: 2 },
     KeyAction::Key {
         code: KeyCode::Enter,
     },
     KeyAction::Key {
         code: KeyCode::Backspace,
     },
-    KeyAction::Key { code: KeyCode::Kb6 },
+    KeyAction::Function {
+        function: KeyFunction::Meh,
+    },
     KeyAction::Key {
         code: KeyCode::RightAlt,
     },
@@ -113,6 +124,132 @@ const KEY_MAP: [KeyAction; 36] = [
         code: KeyCode::None,
     },
 ];
+
+const LOWER_MAP: [KeyAction; 36] = [
+    //row 0
+    KeyAction::None,
+    KeyAction::Key {
+        code: KeyCode::KpNumLock,
+    },
+    KeyAction::Key {
+        code: KeyCode::KpBackslash,
+    },
+    KeyAction::Key {
+        code: KeyCode::KpAsterisk,
+    },
+    KeyAction::Key {
+        code: KeyCode::KpMinus,
+    },
+    KeyAction::Key {
+        code: KeyCode::None,
+    },
+    //row 1
+    KeyAction::None,
+    KeyAction::Key { code: KeyCode::Kp7 },
+    KeyAction::Key { code: KeyCode::Kp8 },
+    KeyAction::Key { code: KeyCode::Kp9 },
+    KeyAction::Key {
+        code: KeyCode::KpPlus,
+    },
+    KeyAction::Key {
+        code: KeyCode::None,
+    },
+    //row 2
+    KeyAction::None,
+    KeyAction::Key { code: KeyCode::Kp4 },
+    KeyAction::Key { code: KeyCode::Kp5 },
+    KeyAction::Key { code: KeyCode::Kp6 },
+    KeyAction::Key {
+        code: KeyCode::KpEnter,
+    },
+    KeyAction::Key {
+        code: KeyCode::None,
+    },
+    //row 3
+    KeyAction::None,
+    KeyAction::Key { code: KeyCode::Kp1 },
+    KeyAction::Key { code: KeyCode::Kp2 },
+    KeyAction::Key { code: KeyCode::Kp3 },
+    KeyAction::None,
+    KeyAction::FallThrough,
+    //row 4
+    KeyAction::FallThrough,
+    KeyAction::FallThrough,
+    KeyAction::FallThrough,
+    KeyAction::Key { code: KeyCode::Kp0 },
+    KeyAction::FallThrough,
+    KeyAction::FallThrough,
+    //row 5
+    KeyAction::FallThrough,
+    KeyAction::FallThrough,
+    KeyAction::FallThrough,
+    KeyAction::FallThrough,
+    KeyAction::Key { code: KeyCode::Dot },
+    KeyAction::FallThrough,
+];
+
+const UPPER_MAP: [KeyAction; 36] = [
+    //row 0
+    KeyAction::Key { code: KeyCode::F6 },
+    KeyAction::Key { code: KeyCode::F7 },
+    KeyAction::Key { code: KeyCode::F8 },
+    KeyAction::Key { code: KeyCode::F9 },
+    KeyAction::Key { code: KeyCode::F10 },
+    KeyAction::Key { code: KeyCode::F11 },
+    //row 1
+    KeyAction::None,
+    KeyAction::Key {
+        code: KeyCode::PageUp,
+    },
+    KeyAction::Key {
+        code: KeyCode::UpArrow,
+    },
+    KeyAction::Key {
+        code: KeyCode::PageDown,
+    },
+    KeyAction::None,
+    KeyAction::Key { code: KeyCode::F12 },
+    //row 2
+    KeyAction::None,
+    KeyAction::Key {
+        code: KeyCode::LeftArrow,
+    },
+    KeyAction::Key {
+        code: KeyCode::DownArrow,
+    },
+    KeyAction::Key {
+        code: KeyCode::RightArrow,
+    },
+    KeyAction::None,
+    KeyAction::Key {
+        code: KeyCode::Pause,
+    },
+    //row 3
+    KeyAction::None,
+    KeyAction::Key {
+        code: KeyCode::Home,
+    },
+    KeyAction::None,
+    KeyAction::Key { code: KeyCode::End },
+    KeyAction::None,
+    KeyAction::FallThrough,
+    //row 4
+    KeyAction::FallThrough,
+    KeyAction::FallThrough,
+    KeyAction::FallThrough,
+    KeyAction::FallThrough,
+    KeyAction::FallThrough,
+    KeyAction::FallThrough,
+    //row 5
+    KeyAction::FallThrough,
+    KeyAction::FallThrough,
+    KeyAction::FallThrough,
+    KeyAction::FallThrough,
+    KeyAction::FallThrough,
+    KeyAction::FallThrough,
+];
+
+const KEY_MAP: [[KeyAction; 36]; 3] = [BASE_MAP, LOWER_MAP, UPPER_MAP];
 
 #[entry]
 fn main() -> ! {
@@ -224,7 +361,7 @@ fn main() -> ! {
 
     let mut _uart = UartPeripheral::<_, _>::new(pac.UART0, &mut pac.RESETS)
         .enable(
-            uart::common_configs::_115200_8_N_1,
+            uart::common_configs::_19200_8_N_1,
             clocks.peripheral_clock.freq(),
         )
         .unwrap();

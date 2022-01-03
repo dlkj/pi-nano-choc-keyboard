@@ -7,8 +7,20 @@ use embedded_hal::digital::v2::OutputPin;
 
 pub mod keycode;
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum KeyAction {
     Key { code: KeyCode },
+    None,
+    FallThrough,
+    Function { function: KeyFunction },
+    Layer { n: usize },
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum KeyFunction {
+    Hyper,
+    Meh,
+    //Todo modifer + keycode
 }
 
 #[derive(Default, Copy, Clone)]
@@ -124,29 +136,88 @@ pub trait KeyboardLayout<const N: usize> {
     fn state(&self, keys: &[KeyState; N]) -> KeyboardLayoutState<N>;
 }
 
-pub struct BasicKeyboardLayout<const N: usize> {
-    keymap: [KeyAction; N],
+pub struct LayerdKeyboardLayout<const N: usize, const L: usize> {
+    keymaps: [[KeyAction; N]; L],
+    layer_keys: arrayvec::ArrayVec<usize, 6>,
 }
 
-impl<const N: usize> BasicKeyboardLayout<N> {
-    pub fn new(keymap: [KeyAction; N]) -> BasicKeyboardLayout<N> {
-        BasicKeyboardLayout { keymap }
+impl<const N: usize, const L: usize> LayerdKeyboardLayout<N, L> {
+    pub fn new(keymaps: [[KeyAction; N]; L]) -> LayerdKeyboardLayout<N, L> {
+        //todo - assert no layer keys on non base layer
+
+        let mut layer_keys = arrayvec::ArrayVec::new();
+        for (i, k) in keymaps[0].iter().enumerate() {
+            if let KeyAction::Layer { .. } = k {
+                layer_keys.push(i);
+            }
+        }
+
+        LayerdKeyboardLayout {
+            keymaps,
+            layer_keys,
+        }
     }
 }
 
-impl<const N: usize> KeyboardLayout<N> for BasicKeyboardLayout<N> {
+impl<const N: usize, const L: usize> KeyboardLayout<N> for LayerdKeyboardLayout<N, L> {
     fn state(&self, keys: &[KeyState; N]) -> KeyboardLayoutState<N> {
+        let mut active_layers = [false; L];
+        active_layers[0] = true; //base layer is always active
+
+        //find all the pressed layer keys
+        for &l in &self.layer_keys {
+            if keys[l].pressed {
+                if let KeyAction::Layer { n } = self.keymaps[0][l] {
+                    active_layers[n] = true;
+                }
+            }
+        }
+
         let mut modifiers = Modifiers::empty();
         let mut keycodes = arrayvec::ArrayVec::new();
 
         for (i, _) in keys.iter().enumerate().filter(|(_, k)| k.pressed) {
-            match self.keymap[i] {
+            let mut key = KeyAction::FallThrough;
+
+            //cascade through the keymaps
+            for l in (0..L).rev() {
+                if key != KeyAction::FallThrough {
+                    break;
+                }
+
+                if active_layers[l] {
+                    key = self.keymaps[l][i];
+                }
+            }
+
+            match key {
                 KeyAction::Key { code } => {
                     if code.is_modifier() {
                         modifiers |= Modifiers::from(code);
                     } else {
                         keycodes.push(code);
                     }
+                }
+                KeyAction::None => {
+                    //do nothing
+                }
+                KeyAction::Function { function: f } => match f {
+                    KeyFunction::Hyper => {
+                        modifiers |= Modifiers::SHIFT_LEFT
+                            | Modifiers::CTRL_LEFT
+                            | Modifiers::ALT_LEFT
+                            | Modifiers::GUI_LEFT;
+                    }
+                    KeyFunction::Meh => {
+                        modifiers |=
+                            Modifiers::SHIFT_LEFT | Modifiers::CTRL_LEFT | Modifiers::ALT_LEFT;
+                    }
+                },
+                KeyAction::Layer { .. } => {
+                    //should already be applied before mapping keys to keycodes
+                }
+                KeyAction::FallThrough => {
+                    //can't fall any lower, same as None
                 }
             }
         }

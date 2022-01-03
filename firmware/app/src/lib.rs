@@ -1,5 +1,8 @@
 #![no_std]
 
+#[macro_use(block)]
+extern crate nb;
+
 use core::{cell::RefCell, fmt::Write};
 use cortex_m::{interrupt::Mutex, prelude::*};
 use display_interface::WriteOnlyDataCommand;
@@ -12,7 +15,7 @@ use ssd1306::size::DisplaySize128x32;
 use usb::UsbManager;
 use usbd_hid::descriptor::KeyboardReport;
 
-use crate::keyboard::{BasicKeyboardLayout, DiodePinMatrix, KeyAction, Keyboard};
+use crate::keyboard::{DiodePinMatrix, KeyAction, Keyboard, LayerdKeyboardLayout};
 
 pub mod debounce;
 pub mod keyboard;
@@ -28,7 +31,7 @@ impl KeyboardRuntime {
         display: &Mutex<RefCell<Option<OledDisplay<W, DisplaySize128x32>>>>,
         usb_manager: &Mutex<RefCell<Option<UsbManager<rp_pico::hal::usb::UsbBus>>>>,
         timer: Timer,
-        keymap: [KeyAction; 36],
+        keymaps: [[KeyAction; 36]; 3],
         rows: [DynPin; 6],
         cols: [DynPin; 6],
     ) -> !
@@ -44,13 +47,13 @@ impl KeyboardRuntime {
 
         let mut cd = timer.count_down();
         cd.start(2.seconds());
-        cd.wait().unwrap();
+        block!(cd.wait()).unwrap();
 
         info!("macropad starting");
 
         let mut keyboard = Keyboard::new(
             DiodePinMatrix::new(rows, cols),
-            BasicKeyboardLayout::new(keymap),
+            LayerdKeyboardLayout::new(keymaps),
         );
 
         let mut fast_countdown = timer.count_down();
