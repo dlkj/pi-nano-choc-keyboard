@@ -127,6 +127,85 @@ where
     }
 }
 
+pub struct SplitMatrix<M1, M2> {
+    pub matrix1: M1,
+    pub matrix2: M2,
+}
+
+impl<M1, M2, E1, E2> KeyboardMatrix<72> for SplitMatrix<M1, M2>
+where
+    M1: KeyboardMatrix<36, Error = E1>,
+    M2: KeyboardMatrix<36, Error = E2>,
+    E1: core::fmt::Debug,
+    E2: core::fmt::Debug,
+{
+    type Error = core::convert::Infallible;
+
+    fn update(&mut self) -> Result<(), Self::Error> {
+        self.matrix1.update().unwrap();
+        self.matrix2.update().unwrap();
+        Ok(())
+    }
+
+    fn keys(&mut self) -> Result<[KeyState; 72], Self::Error> {
+        let k1 = self.matrix1.keys().unwrap();
+        let k2 = self.matrix2.keys().unwrap();
+
+        let mut keys = [KeyState::default(); 72];
+
+        keys[..36].clone_from_slice(&k1);
+        keys[36..37].clone_from_slice(&k2);
+
+        Ok(keys)
+    }
+}
+
+pub struct UartMatrix<U> {
+    uart: U,
+    current: arrayvec::ArrayVec<u8, 128>,
+    next: arrayvec::ArrayVec<u8, 128>,
+}
+
+impl<U> UartMatrix<U> {
+    pub fn new(uart: U) -> Self {
+        Self {
+            uart,
+            current: arrayvec::ArrayVec::new(),
+            next: arrayvec::ArrayVec::new(),
+        }
+    }
+}
+
+impl<U> KeyboardMatrix<36> for UartMatrix<U>
+where
+    U: embedded_hal::serial::Read<u8>,
+{
+    type Error = core::convert::Infallible;
+
+    fn update(&mut self) -> Result<(), Self::Error> {
+        while let Ok(x) = self.uart.read() {
+            if x == 0xFF {
+                self.current = self.next.clone();
+                self.next.clear();
+            } else {
+                self.next.push(x);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn keys(&mut self) -> Result<[KeyState; 36], Self::Error> {
+        let mut keys = [KeyState::default(); 36];
+
+        for &k in &self.current {
+            keys[k as usize].pressed = true;
+        }
+
+        Ok(keys)
+    }
+}
+
 pub struct KeyboardLayoutState<const KEY_COUNT: usize> {
     pub modifiers: Modifiers,
     pub keycodes: ArrayVec<KeyCode, KEY_COUNT>,
@@ -176,7 +255,7 @@ impl<const N: usize, const L: usize> KeyboardLayout<N> for LayerdKeyboardLayout<
         let mut modifiers = Modifiers::empty();
         let mut keycodes = arrayvec::ArrayVec::new();
 
-        for (i, _) in keys.iter().enumerate().filter(|(_, k)| k.pressed) {
+        for (i, _) in keys.iter().enumerate().filter(|(_, &k)| k.pressed) {
             let mut key = KeyAction::FallThrough;
 
             //cascade through the keymaps
@@ -234,7 +313,6 @@ pub struct KeyboardState<const KEY_COUNT: usize> {
     pub keycodes: ArrayVec<KeyCode, KEY_COUNT>,
     pub keys: [KeyState; KEY_COUNT],
 }
-
 pub struct Keyboard<KM, KL, const KEY_COUNT: usize> {
     matrix: KM,
     layout: KL,

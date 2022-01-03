@@ -3,18 +3,20 @@
 
 //USB serial console (minicom -b 115200 -o -D /dev/ttyACM0)
 
-use app::keyboard::keycode::KeyCode;
+use app::keyboard::*;
 use app::usb::UsbManager;
-use app::{keyboard::*, KeyboardRuntime};
 use core::cell::RefCell;
 use core::panic::PanicInfo;
 use core::sync::atomic::{self, Ordering};
 use core::{fmt, fmt::Write};
 use cortex_m::interrupt::Mutex;
+use cortex_m::prelude::_embedded_hal_timer_CountDown;
 use cortex_m_rt::entry;
 use embedded_hal::digital::v2::OutputPin;
-use log::{error, LevelFilter};
+use embedded_time::duration::Extensions;
+use log::{error, info, LevelFilter};
 use log::{Level, Metadata, Record};
+use nb::block;
 use rp_pico::hal::clocks::{self, ClocksManager};
 use rp_pico::hal::gpio::{FunctionUart, I2C};
 use rp_pico::hal::uart::{self, UartPeripheral};
@@ -45,211 +47,6 @@ static USB_MANAGER: Mutex<RefCell<Option<UsbManager<hal::usb::UsbBus>>>> =
     Mutex::new(RefCell::new(None));
 static LOGGER: Logger = Logger {};
 static OLED_DISPLAY: Mutex<RefCell<Option<OledDisplay>>> = Mutex::new(RefCell::new(None));
-
-const BASE_MAP: [KeyAction; 36] = [
-    //row 0
-    KeyAction::Key { code: KeyCode::Kb6 },
-    KeyAction::Key { code: KeyCode::Kb7 },
-    KeyAction::Key { code: KeyCode::Kb8 },
-    KeyAction::Key { code: KeyCode::Kb9 },
-    KeyAction::Key { code: KeyCode::Kb0 },
-    KeyAction::Key {
-        code: KeyCode::Minus,
-    },
-    //row 1
-    KeyAction::Key { code: KeyCode::Y },
-    KeyAction::Key { code: KeyCode::U },
-    KeyAction::Key { code: KeyCode::I },
-    KeyAction::Key { code: KeyCode::O },
-    KeyAction::Key { code: KeyCode::P },
-    KeyAction::Key {
-        code: KeyCode::Equals,
-    },
-    //row 2
-    KeyAction::Key { code: KeyCode::H },
-    KeyAction::Key { code: KeyCode::J },
-    KeyAction::Key { code: KeyCode::K },
-    KeyAction::Key { code: KeyCode::L },
-    KeyAction::Key {
-        code: KeyCode::Semicolon,
-    },
-    KeyAction::Key {
-        code: KeyCode::Apostrophy,
-    },
-    //row 3
-    KeyAction::Key { code: KeyCode::N },
-    KeyAction::Key { code: KeyCode::M },
-    KeyAction::Key {
-        code: KeyCode::Comma,
-    },
-    KeyAction::Key { code: KeyCode::Dot },
-    KeyAction::Key {
-        code: KeyCode::ForwardSlash,
-    },
-    KeyAction::Key {
-        code: KeyCode::RightShift,
-    },
-    //row 4
-    KeyAction::Key {
-        code: KeyCode::RightBracket,
-    },
-    KeyAction::None,
-    KeyAction::Key {
-        code: KeyCode::Delete,
-    },
-    KeyAction::Key {
-        code: KeyCode::Hash,
-    },
-    KeyAction::Key {
-        code: KeyCode::Application,
-    },
-    KeyAction::Key {
-        code: KeyCode::RightControl,
-    },
-    //row 5
-    KeyAction::Layer { n: 2 },
-    KeyAction::Key {
-        code: KeyCode::Enter,
-    },
-    KeyAction::Key {
-        code: KeyCode::Backspace,
-    },
-    KeyAction::Function {
-        function: KeyFunction::Meh,
-    },
-    KeyAction::Key {
-        code: KeyCode::RightAlt,
-    },
-    KeyAction::Key {
-        code: KeyCode::None,
-    },
-];
-
-const LOWER_MAP: [KeyAction; 36] = [
-    //row 0
-    KeyAction::None,
-    KeyAction::Key {
-        code: KeyCode::KpNumLock,
-    },
-    KeyAction::Key {
-        code: KeyCode::KpBackslash,
-    },
-    KeyAction::Key {
-        code: KeyCode::KpAsterisk,
-    },
-    KeyAction::Key {
-        code: KeyCode::KpMinus,
-    },
-    KeyAction::Key {
-        code: KeyCode::None,
-    },
-    //row 1
-    KeyAction::None,
-    KeyAction::Key { code: KeyCode::Kp7 },
-    KeyAction::Key { code: KeyCode::Kp8 },
-    KeyAction::Key { code: KeyCode::Kp9 },
-    KeyAction::Key {
-        code: KeyCode::KpPlus,
-    },
-    KeyAction::Key {
-        code: KeyCode::None,
-    },
-    //row 2
-    KeyAction::None,
-    KeyAction::Key { code: KeyCode::Kp4 },
-    KeyAction::Key { code: KeyCode::Kp5 },
-    KeyAction::Key { code: KeyCode::Kp6 },
-    KeyAction::Key {
-        code: KeyCode::KpEnter,
-    },
-    KeyAction::Key {
-        code: KeyCode::None,
-    },
-    //row 3
-    KeyAction::None,
-    KeyAction::Key { code: KeyCode::Kp1 },
-    KeyAction::Key { code: KeyCode::Kp2 },
-    KeyAction::Key { code: KeyCode::Kp3 },
-    KeyAction::None,
-    KeyAction::FallThrough,
-    //row 4
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::Key { code: KeyCode::Kp0 },
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    //row 5
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::Key { code: KeyCode::Dot },
-    KeyAction::FallThrough,
-];
-
-const UPPER_MAP: [KeyAction; 36] = [
-    //row 0
-    KeyAction::Key { code: KeyCode::F6 },
-    KeyAction::Key { code: KeyCode::F7 },
-    KeyAction::Key { code: KeyCode::F8 },
-    KeyAction::Key { code: KeyCode::F9 },
-    KeyAction::Key { code: KeyCode::F10 },
-    KeyAction::Key { code: KeyCode::F11 },
-    //row 1
-    KeyAction::None,
-    KeyAction::Key {
-        code: KeyCode::PageUp,
-    },
-    KeyAction::Key {
-        code: KeyCode::UpArrow,
-    },
-    KeyAction::Key {
-        code: KeyCode::PageDown,
-    },
-    KeyAction::None,
-    KeyAction::Key { code: KeyCode::F12 },
-    //row 2
-    KeyAction::None,
-    KeyAction::Key {
-        code: KeyCode::LeftArrow,
-    },
-    KeyAction::Key {
-        code: KeyCode::DownArrow,
-    },
-    KeyAction::Key {
-        code: KeyCode::RightArrow,
-    },
-    KeyAction::None,
-    KeyAction::Key {
-        code: KeyCode::Pause,
-    },
-    //row 3
-    KeyAction::None,
-    KeyAction::Key {
-        code: KeyCode::Home,
-    },
-    KeyAction::None,
-    KeyAction::Key { code: KeyCode::End },
-    KeyAction::None,
-    KeyAction::FallThrough,
-    //row 4
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    //row 5
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-];
-
-const KEY_MAP: [[KeyAction; 36]; 3] = [BASE_MAP, LOWER_MAP, UPPER_MAP];
 
 #[entry]
 fn main() -> ! {
@@ -359,7 +156,7 @@ fn main() -> ! {
 
     let timer = Timer::new(pac.TIMER, &mut pac.RESETS);
 
-    let mut _uart = UartPeripheral::<_, _>::new(pac.UART0, &mut pac.RESETS)
+    let uart = UartPeripheral::<_, _>::new(pac.UART0, &mut pac.RESETS)
         .enable(
             uart::common_configs::_19200_8_N_1,
             clocks.peripheral_clock.freq(),
@@ -385,7 +182,81 @@ fn main() -> ! {
     //     }
     // }
 
-    KeyboardRuntime::run(&OLED_DISPLAY, &USB_MANAGER, timer, KEY_MAP, rows, cols);
+    start(timer, uart, rows, cols);
+}
+
+fn start<U>(timer: Timer, mut uart: U, rows: [DynPin; 6], cols: [DynPin; 6]) -> !
+where
+    U: embedded_hal::serial::Write<u8>,
+    U::Error: core::fmt::Debug,
+{
+    // Splash screen
+    cortex_m::interrupt::free(|cs| {
+        let mut oled_display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
+        let oled_display = oled_display_ref.as_mut().unwrap();
+        oled_display.draw_text_screen("Starting...").unwrap();
+    });
+
+    let mut cd = timer.count_down();
+    cd.start(2.seconds());
+    block!(cd.wait()).unwrap();
+
+    info!("macropad starting");
+
+    let mut matrix = DiodePinMatrix::new(rows, cols);
+
+    let mut fast_countdown = timer.count_down();
+    fast_countdown.start(100.nanoseconds());
+
+    let mut slow_countdown = timer.count_down();
+    slow_countdown.start(20.milliseconds());
+
+    //let mut led_pin = pins.led.into_readable_output();
+
+    info!("Running main loop");
+    loop {
+        //0.1ms scan the keys and debounce
+        if fast_countdown.wait().is_ok() {
+            // let (p_a, p_b) = rot_enc.pins_borrow_mut();
+            // p_a.update().expect("Failed to update rot a debouncer");
+            // p_b.update().expect("Failed to update rot b debouncer");
+
+            //todo: move onto an interupt timer
+            //rot_enc.update();
+
+            matrix.update().expect("Failed to update keys");
+        }
+
+        //10ms
+        if slow_countdown.wait().is_ok() {
+            //100Hz or slower
+            let keys = matrix.keys().expect("Failed to get matrix keys");
+
+            let pressed_keys: arrayvec::ArrayVec<usize, 36> = keys
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &k)| k.pressed.then(|| i))
+                .collect();
+
+            for &k in &pressed_keys {
+                block!(uart.write(k as u8)).unwrap();
+            }
+            block!(uart.write(0xFF)).unwrap();
+
+            let mut output = arrayvec::ArrayString::<1024>::new();
+            if write!(&mut output, "k:\ns{:#02?}\n", &pressed_keys)
+                .ok()
+                .is_some()
+            {
+                cortex_m::interrupt::free(|cs| {
+                    let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
+                    if let Some(display) = display_ref.as_mut() {
+                        display.draw_text_screen(output.as_str()).ok();
+                    }
+                });
+            }
+        }
+    }
 }
 
 #[allow(non_snake_case)]
