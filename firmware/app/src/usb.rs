@@ -58,16 +58,11 @@ where
             .poll(&mut [&mut self.serial_port, &mut self.keyboard])
         {
             let mut buf = [0u8; 64];
-            match self.serial_port.read(&mut buf) {
-                _ => {}
-            }
+            self.serial_port.read(&mut buf).ok(); //discard incoming data
 
             let mut buf = [0u8; 64];
-            match self.keyboard.pull_raw_output(&mut buf) {
-                Ok(1) => {
-                    self.keyboard_led = buf[0];
-                }
-                _ => {}
+            if let Ok(1) = self.keyboard.pull_raw_output(&mut buf) {
+                self.keyboard_led = buf[0];
             }
         }
     }
