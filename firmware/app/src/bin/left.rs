@@ -590,19 +590,21 @@ where
             let keyboard_state = keyboard.state().unwrap();
             let keyboard_report = get_hid_report(&keyboard_state);
 
+            let mut led = 0;
             //todo - spin lock until usb ready to recive, reset timers
             cortex_m::interrupt::free(|cs| {
                 let mut usb_ref = USB_MANAGER.borrow(cs).borrow_mut();
                 if let Some(usb) = usb_ref.as_mut() {
                     usb.keyboard_borrow_mut().push_input(&keyboard_report).ok();
+                    led = usb.keyboard_led();
                 }
             });
 
             let mut output = arrayvec::ArrayString::<1024>::new();
             if write!(
                 &mut output,
-                "k:\ns{:#04X?}\n\nm:\n{:08b}",
-                keyboard_report.keycodes, keyboard_report.modifier
+                "l:\n{:08b}\n\nk:\ns{:02X?}\n\nm:\n{:08b}",
+                led, keyboard_report.keycodes, keyboard_report.modifier
             )
             .ok()
             .is_some()

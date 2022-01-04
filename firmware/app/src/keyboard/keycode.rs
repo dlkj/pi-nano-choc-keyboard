@@ -276,3 +276,11 @@ impl From<KeyCode> for Modifiers {
         }
     }
 }
+
+bitflags! {
+    pub struct Leds: u8 {
+        const NUM_LOCK    = 0b00000001;
+        const CAP_LOCK    = 0b00000010;
+        const SCROLL_LOCK = 0b00000100;
+    }
+}

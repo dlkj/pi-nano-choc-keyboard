@@ -12,6 +12,7 @@ where
     usb_device: UsbDevice<'a, B>,
     serial_port: SerialPort<'a, B>,
     keyboard: HIDClass<'a, B>,
+    keyboard_led: u8,
 }
 
 impl<'a, B> UsbManager<'a, B>
@@ -34,6 +35,7 @@ where
             serial_port,
             keyboard,
             usb_device,
+            keyboard_led: 0,
         }
     }
 
@@ -45,6 +47,10 @@ where
         &mut self.serial_port
     }
 
+    pub fn keyboard_led(&self) -> u8 {
+        self.keyboard_led
+    }
+
     pub fn service_irq(&mut self) {
         // Poll the USB driver with all of our supported USB Classes
         if self
@@ -53,14 +59,15 @@ where
         {
             let mut buf = [0u8; 64];
             match self.serial_port.read(&mut buf) {
-                Err(_e) => {}
-                Ok(_count) => {}
+                _ => {}
             }
 
             let mut buf = [0u8; 64];
             match self.keyboard.pull_raw_output(&mut buf) {
-                Err(_e) => {}
-                Ok(_count) => {}
+                Ok(1) => {
+                    self.keyboard_led = buf[0];
+                }
+                _ => {}
             }
         }
     }
