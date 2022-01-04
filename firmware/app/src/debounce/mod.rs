@@ -29,8 +29,10 @@ where
 
         Ok(())
     }
+}
 
-    pub fn borrow(&self) -> &P {
+impl<P> core::borrow::Borrow<P> for DebouncedPin<P> {
+    fn borrow(&self) -> &P {
         &self.pin
     }
 }

@@ -600,22 +600,19 @@ where
                 }
             });
 
-            let mut output = arrayvec::ArrayString::<1024>::new();
-            if write!(
-                &mut output,
-                "l:\n{:08b}\n\nk:\ns{:02X?}\n\nm:\n{:08b}",
-                led, keyboard_report.keycodes, keyboard_report.modifier
-            )
-            .ok()
-            .is_some()
-            {
-                cortex_m::interrupt::free(|cs| {
-                    let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
-                    if let Some(display) = display_ref.as_mut() {
-                        display.draw_text_screen(output.as_str()).ok();
-                    }
-                });
-            }
+            cortex_m::interrupt::free(|cs| {
+                let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
+                if let Some(display) = display_ref.as_mut() {
+                    display
+                        .draw_right_display(
+                            led.into(),
+                            keyboard_report.modifier.into(),
+                            keyboard_report.keycodes,
+                            keyboard_state.layer,
+                        )
+                        .ok();
+                }
+            });
         }
     }
 }

@@ -277,10 +277,22 @@ impl From<KeyCode> for Modifiers {
     }
 }
 
+impl From<u8> for Modifiers {
+    fn from(bits: u8) -> Self {
+        Modifiers::from_bits_truncate(bits)
+    }
+}
+
 bitflags! {
     pub struct Leds: u8 {
         const NUM_LOCK    = 0b00000001;
         const CAP_LOCK    = 0b00000010;
         const SCROLL_LOCK = 0b00000100;
+    }
+}
+
+impl From<u8> for Leds {
+    fn from(bits: u8) -> Self {
+        Leds::from_bits_truncate(bits)
     }
 }

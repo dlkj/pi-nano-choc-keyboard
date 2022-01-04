@@ -1,14 +1,12 @@
 use core::fmt::Write;
 use display_interface::DisplayError;
-use embedded_graphics::primitives::Line;
+use embedded_graphics::primitives::{Line, RoundedRectangle};
 use embedded_graphics::{
     image::{Image, ImageRawLE},
-    mono_font::{ascii::FONT_4X6, ascii::FONT_6X10, MonoTextStyle},
+    mono_font::{ascii::*, MonoTextStyle},
     pixelcolor::BinaryColor,
     prelude::*,
-    primitives::{
-        Circle, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle, StrokeAlignment, Triangle,
-    },
+    primitives::{PrimitiveStyle, Rectangle},
     text::{Alignment, Text},
 };
 use embedded_text::{
@@ -18,6 +16,8 @@ use embedded_text::{
 };
 use ssd1306::mode::BufferedGraphicsMode;
 use ssd1306::{prelude::*, Ssd1306};
+
+use crate::keyboard;
 
 pub struct OledDisplay<DI, SIZE>
 where
@@ -49,6 +49,121 @@ where
         Ok(())
     }
 
+    fn draw_led_indicator(
+        display: &mut Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>,
+        top_left: Point,
+        text: &str,
+    ) -> Result<(), DisplayError> {
+        let led_text_style = MonoTextStyle::new(&FONT_6X13_BOLD, BinaryColor::Off);
+        let fill = PrimitiveStyle::with_fill(BinaryColor::On);
+
+        let bounding_box = Rectangle::new(top_left, Size::new(8, 11));
+
+        RoundedRectangle::with_equal_corners(bounding_box, Size::new(2, 2))
+            .into_styled(fill)
+            .draw(display)?;
+
+        Text::with_alignment(
+            text,
+            bounding_box.center() + Point::new(0, 4),
+            led_text_style,
+            Alignment::Center,
+        )
+        .draw(display)?;
+        Ok(())
+    }
+
+    fn draw_layer_indicator(
+        display: &mut Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>,
+        top_left: Point,
+        layer: usize,
+    ) -> Result<(), DisplayError> {
+        let text_style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
+
+        let bounding_box = Rectangle::new(top_left, Size::new(32, 6));
+
+        let mut buffer = arrayvec::ArrayString::<256>::new();
+        let text = if layer == 0 {
+            "Base"
+        } else {
+            write!(&mut buffer, "Layer {}", layer).unwrap();
+            &buffer[..]
+        };
+
+        Text::with_alignment(
+            text,
+            bounding_box.center() + Point::new(0, 4),
+            text_style,
+            Alignment::Center,
+        )
+        .draw(display)?;
+        Ok(())
+    }
+
+    fn draw_keycode_indicator(
+        display: &mut Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>,
+        top_left: Point,
+        modifier: keyboard::keycode::Modifiers,
+        keycodes: [u8; 6],
+    ) -> Result<(), DisplayError> {
+        let thin_stroke = PrimitiveStyle::with_stroke(BinaryColor::On, 1);
+        let bounding_box = Rectangle::new(top_left, Size::new(32, 16));
+        let fill = PrimitiveStyle::with_fill(BinaryColor::On);
+
+        if !modifier.is_empty() {
+            RoundedRectangle::with_equal_corners(
+                Rectangle::with_center(bounding_box.center(), Size::new(16, 16)),
+                Size::new(3, 3),
+            )
+            .into_styled(thin_stroke)
+            .draw(display)?;
+        }
+
+        if keycodes.iter().any(|&k| k != 0) {
+            RoundedRectangle::with_equal_corners(
+                Rectangle::with_center(bounding_box.center(), Size::new(12, 12)),
+                Size::new(2, 2),
+            )
+            .into_styled(fill)
+            .draw(display)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn draw_right_display(
+        &mut self,
+        leds: keyboard::keycode::Leds,
+        modifier: keyboard::keycode::Modifiers,
+        keycodes: [u8; 6],
+        layer: usize,
+    ) -> Result<(), DisplayError> {
+        self.display.clear();
+
+        //Led indicators
+        if leds.contains(keyboard::keycode::Leds::NUM_LOCK) {
+            Self::draw_led_indicator(&mut self.display, Point::new(0, 0), "1")?;
+        }
+
+        if leds.contains(keyboard::keycode::Leds::CAP_LOCK) {
+            Self::draw_led_indicator(&mut self.display, Point::new(12, 0), "C")?;
+        }
+
+        if leds.contains(keyboard::keycode::Leds::SCROLL_LOCK) {
+            Self::draw_led_indicator(&mut self.display, Point::new(24, 0), "S")?;
+        }
+
+        //Layer
+        Self::draw_layer_indicator(&mut self.display, Point::new(0, 13), layer)?;
+
+        //Keycode indicator
+        Self::draw_keycode_indicator(&mut self.display, Point::new(0, 112), modifier, keycodes)?;
+
+        self.display.flush()?;
+
+        Ok(())
+    }
+
     pub fn draw_text_screen(&mut self, text: &str) -> Result<(), DisplayError> {
         self.display.clear();
         let character_style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
@@ -65,18 +180,6 @@ where
         Ok(())
     }
 
-    pub fn draw_numpad(&mut self, enc_value: i32) -> Result<(), DisplayError> {
-        self.display.clear();
-        let mut output = arrayvec::ArrayString::<256>::new();
-        write!(
-            &mut output,
-            "7 8 9\n4 5 6\n1 2 3\n0 . E\nEnc: {}",
-            enc_value
-        )
-        .unwrap();
-        self.draw_text_screen(output.as_str())
-    }
-
     pub fn draw_pin_log(&mut self, data: &[bool]) {
         self.display.clear();
         for (i, d) in data.iter().enumerate() {
@@ -89,67 +192,5 @@ where
             .unwrap();
         }
         self.display.flush().unwrap();
-    }
-
-    #[allow(dead_code)]
-    pub fn draw_test(&mut self) -> Result<(), DisplayError> {
-        self.display.clear();
-
-        // Create styles used by the drawing operations.
-        let thin_stroke = PrimitiveStyle::with_stroke(BinaryColor::On, 1);
-        let thick_stroke = PrimitiveStyle::with_stroke(BinaryColor::On, 3);
-        let border_stroke = PrimitiveStyleBuilder::new()
-            .stroke_color(BinaryColor::On)
-            .stroke_width(3)
-            .stroke_alignment(StrokeAlignment::Inside)
-            .build();
-        let fill = PrimitiveStyle::with_fill(BinaryColor::On);
-        let character_style = MonoTextStyle::new(&FONT_6X10, BinaryColor::On);
-
-        let yoffset = 10;
-
-        // Draw a 3px wide outline around the display.
-        self.display
-            .bounding_box()
-            .into_styled(border_stroke)
-            .draw(&mut self.display)
-            .unwrap();
-
-        // Draw a triangle.
-        Triangle::new(
-            Point::new(16, 16 + yoffset),
-            Point::new(16 + 16, 16 + yoffset),
-            Point::new(16 + 8, yoffset),
-        )
-        .into_styled(thin_stroke)
-        .draw(&mut self.display)
-        .unwrap();
-
-        // Draw a filled square
-        Rectangle::new(Point::new(52, yoffset), Size::new(16, 16))
-            .into_styled(fill)
-            .draw(&mut self.display)
-            .unwrap();
-
-        // Draw a circle with a 3px wide stroke.
-        Circle::new(Point::new(88, yoffset), 17)
-            .into_styled(thick_stroke)
-            .draw(&mut self.display)
-            .unwrap();
-
-        // Draw centered text.
-        let text = "embedded-graphics";
-        Text::with_alignment(
-            text,
-            self.display.bounding_box().center() + Point::new(0, 15),
-            character_style,
-            Alignment::Center,
-        )
-        .draw(&mut self.display)
-        .unwrap();
-
-        self.display.flush()?;
-
-        Ok(())
     }
 }

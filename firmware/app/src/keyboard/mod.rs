@@ -209,6 +209,7 @@ where
 pub struct KeyboardLayoutState<const KEY_COUNT: usize> {
     pub modifiers: Modifiers,
     pub keycodes: ArrayVec<KeyCode, KEY_COUNT>,
+    pub layer: usize,
 }
 
 pub trait KeyboardLayout<const N: usize> {
@@ -241,6 +242,7 @@ impl<const N: usize, const L: usize> LayerdKeyboardLayout<N, L> {
 impl<const N: usize, const L: usize> KeyboardLayout<N> for LayerdKeyboardLayout<N, L> {
     fn state(&self, keys: &[KeyState; N]) -> KeyboardLayoutState<N> {
         let mut active_layers = [false; L];
+        let mut max_layer = 0;
         active_layers[0] = true; //base layer is always active
 
         //find all the pressed layer keys
@@ -248,6 +250,7 @@ impl<const N: usize, const L: usize> KeyboardLayout<N> for LayerdKeyboardLayout<
             if keys[l].pressed {
                 if let KeyAction::Layer { n } = self.keymaps[0][l] {
                     active_layers[n] = true;
+                    max_layer = max_layer.max(n)
                 }
             }
         }
@@ -304,6 +307,7 @@ impl<const N: usize, const L: usize> KeyboardLayout<N> for LayerdKeyboardLayout<
         KeyboardLayoutState {
             modifiers,
             keycodes,
+            layer: max_layer,
         }
     }
 }
@@ -312,6 +316,7 @@ pub struct KeyboardState<const KEY_COUNT: usize> {
     pub modifiers: Modifiers,
     pub keycodes: ArrayVec<KeyCode, KEY_COUNT>,
     pub keys: [KeyState; KEY_COUNT],
+    pub layer: usize,
 }
 pub struct Keyboard<KM, KL, const KEY_COUNT: usize> {
     matrix: KM,
@@ -337,6 +342,7 @@ where
             modifiers: layout_state.modifiers,
             keycodes: layout_state.keycodes,
             keys,
+            layer: layout_state.layer,
         })
     }
 }
