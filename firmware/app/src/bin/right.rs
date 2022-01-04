@@ -75,6 +75,8 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
+    let timer = Timer::new(pac.TIMER, &mut pac.RESETS);
+
     cortex_m::interrupt::free(|cs| {
         //Init display
         let scl_pin = pins.gpio17.into_mode::<rp_pico::hal::gpio::FunctionI2C>();
@@ -97,7 +99,10 @@ fn main() -> ! {
 
         OLED_DISPLAY
             .borrow(cs)
-            .replace(Some(app::oled_display::OledDisplay::new(display)));
+            .replace(Some(app::oled_display::OledDisplay::new(
+                display,
+                timer.get_counter(),
+            )));
 
         //Init USB
         static mut USB_BUS: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
@@ -154,8 +159,6 @@ fn main() -> ! {
         p.set_low().unwrap();
     }
 
-    let timer = Timer::new(pac.TIMER, &mut pac.RESETS);
-
     let uart = UartPeripheral::<_, _>::new(pac.UART0, &mut pac.RESETS)
         .enable(
             uart::common_configs::_19200_8_N_1,
@@ -197,6 +200,8 @@ where
 
     //let mut led_pin = pins.led.into_readable_output();
 
+    let mut last_keypress_time = timer.get_counter();
+
     info!("Running main loop");
     loop {
         //0.1ms scan the keys and debounce
@@ -227,17 +232,31 @@ where
             }
             block!(uart.write(0xFF)).unwrap();
 
-            let mut output = arrayvec::ArrayString::<1024>::new();
-            if write!(&mut output, "k:\ns{:#02?}\n", &pressed_keys)
-                .ok()
-                .is_some()
-            {
+            if pressed_keys.len() > 0 {
+                last_keypress_time = timer.get_counter();
+            }
+
+            if timer.get_counter().wrapping_sub(last_keypress_time) > 10_000_000 {
+                //10 seconds
                 cortex_m::interrupt::free(|cs| {
                     let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
                     if let Some(display) = display_ref.as_mut() {
-                        display.draw_text_screen(output.as_str()).ok();
+                        display.draw_screen_saver().ok();
                     }
                 });
+            } else {
+                let mut output = arrayvec::ArrayString::<1024>::new();
+                if write!(&mut output, "k:\ns{:#02?}\n", &pressed_keys)
+                    .ok()
+                    .is_some()
+                {
+                    cortex_m::interrupt::free(|cs| {
+                        let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
+                        if let Some(display) = display_ref.as_mut() {
+                            display.draw_text_screen(output.as_str()).ok();
+                        }
+                    });
+                }
             }
         }
     }

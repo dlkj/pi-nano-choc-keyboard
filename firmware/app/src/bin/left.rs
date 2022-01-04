@@ -435,6 +435,8 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
+    let timer = Timer::new(pac.TIMER, &mut pac.RESETS);
+
     cortex_m::interrupt::free(|cs| {
         //Init display
         let scl_pin = pins.gpio15.into_mode::<hal::gpio::FunctionI2C>();
@@ -457,7 +459,7 @@ fn main() -> ! {
 
         OLED_DISPLAY
             .borrow(cs)
-            .replace(Some(OledDisplay::new(display)));
+            .replace(Some(OledDisplay::new(display, timer.get_counter())));
 
         //Init USB
         static mut USB_BUS: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
@@ -514,8 +516,6 @@ fn main() -> ! {
         p.set_low().unwrap();
     }
 
-    let timer = Timer::new(pac.TIMER, &mut pac.RESETS);
-
     let uart = UartPeripheral::<_, _>::new(pac.UART0, &mut pac.RESETS)
         .enable(
             uart::common_configs::_19200_8_N_1,
@@ -568,6 +568,8 @@ where
 
     //let mut led_pin = pins.led.into_readable_output();
 
+    let mut last_keypress_time = timer.get_counter();
+
     info!("Running main loop");
     loop {
         //0.1ms scan the keys and debounce
@@ -600,19 +602,33 @@ where
                 }
             });
 
-            cortex_m::interrupt::free(|cs| {
-                let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
-                if let Some(display) = display_ref.as_mut() {
-                    display
-                        .draw_right_display(
-                            led.into(),
-                            keyboard_report.modifier.into(),
-                            keyboard_report.keycodes,
-                            keyboard_state.layer,
-                        )
-                        .ok();
-                }
-            });
+            if keyboard_report.modifier != 0 || keyboard_report.keycodes.iter().any(|&k| k != 0) {
+                last_keypress_time = timer.get_counter();
+            }
+
+            if timer.get_counter().wrapping_sub(last_keypress_time) > 10_000_000 {
+                //10 seconds
+                cortex_m::interrupt::free(|cs| {
+                    let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
+                    if let Some(display) = display_ref.as_mut() {
+                        display.draw_screen_saver().ok();
+                    }
+                });
+            } else {
+                cortex_m::interrupt::free(|cs| {
+                    let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
+                    if let Some(display) = display_ref.as_mut() {
+                        display
+                            .draw_right_display(
+                                led.into(),
+                                keyboard_report.modifier.into(),
+                                keyboard_report.keycodes,
+                                keyboard_state.layer,
+                            )
+                            .ok();
+                    }
+                });
+            }
         }
     }
 }

@@ -14,6 +14,8 @@ use embedded_text::{
     style::{HeightMode, TextBoxStyleBuilder},
     TextBox,
 };
+use rand::prelude::SmallRng;
+use rand::{RngCore, SeedableRng};
 use ssd1306::mode::BufferedGraphicsMode;
 use ssd1306::{prelude::*, Ssd1306};
 
@@ -25,6 +27,7 @@ where
     SIZE: ssd1306::mode::TerminalDisplaySize,
 {
     display: Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>,
+    rng: SmallRng,
 }
 
 impl<DI, SIZE> OledDisplay<DI, SIZE>
@@ -32,8 +35,14 @@ where
     DI: WriteOnlyDataCommand,
     SIZE: ssd1306::mode::TerminalDisplaySize,
 {
-    pub fn new(display: Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>) -> OledDisplay<DI, SIZE> {
-        OledDisplay { display }
+    pub fn new(
+        display: Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>,
+        rng_seed: u64,
+    ) -> OledDisplay<DI, SIZE> {
+        OledDisplay {
+            display,
+            rng: SmallRng::seed_from_u64(rng_seed),
+        }
     }
 
     pub fn draw_image(&mut self, data: &[u8], width: u32) -> Result<(), DisplayError> {
@@ -161,6 +170,22 @@ where
 
         self.display.flush()?;
 
+        Ok(())
+    }
+
+    pub fn draw_screen_saver(&mut self) -> Result<(), DisplayError> {
+        self.display.clear();
+
+        let pixels = [Pixel(
+            Point::new(
+                self.rng.next_u32() as i32 % 32,
+                self.rng.next_u32() as i32 % 128,
+            ),
+            BinaryColor::On,
+        )];
+        self.display.draw_iter(pixels)?;
+
+        self.display.flush()?;
         Ok(())
     }
 
