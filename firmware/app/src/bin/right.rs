@@ -165,22 +165,6 @@ fn main() -> ! {
 
     let _tx_pin = pins.gpio12.into_mode::<FunctionUart>();
     let _rx_pin = pins.gpio13.into_mode::<FunctionUart>();
-    // uart.write_full_blocking(b"Hello World!\r\n");
-
-    // let mut output = arrayvec::ArrayString::<1024>::new();
-    // loop {
-    //     if let Ok(byte) = uart.read() {
-    //         output.push(byte.into());
-    //     }
-    //     else{
-    //         cortex_m::interrupt::free(|cs| {
-    //             let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
-    //             if let Some(display) = display_ref.as_mut() {
-    //                 display.draw_text_screen(output.as_str()).ok();
-    //             }
-    //         });
-    //     }
-    // }
 
     start(timer, uart, rows, cols);
 }
