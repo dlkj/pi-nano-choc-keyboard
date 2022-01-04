@@ -154,7 +154,7 @@ where
         let mut keys = [KeyState::default(); 72];
 
         keys[..36].clone_from_slice(&k1);
-        keys[36..37].clone_from_slice(&k2);
+        keys[36..72].clone_from_slice(&k2);
 
         Ok(keys)
     }
