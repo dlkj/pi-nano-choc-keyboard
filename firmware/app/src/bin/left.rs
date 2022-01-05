@@ -3,28 +3,37 @@
 
 //USB serial console (minicom -b 115200 -o -D /dev/ttyACM0)
 
-use app::keyboard::keycode::KeyCode;
+use app::keyboard::keycode::*;
 use app::keyboard::*;
+use app::oled_display::OledDisplay;
 use app::usb::UsbManager;
 use core::cell::RefCell;
 use core::panic::PanicInfo;
 use core::sync::atomic::{self, Ordering};
 use core::{fmt, fmt::Write};
 use cortex_m::interrupt::Mutex;
-use cortex_m::prelude::_embedded_hal_timer_CountDown;
+use cortex_m::prelude::*;
 use cortex_m_rt::entry;
+use embedded_graphics::mono_font::iso_8859_1::FONT_4X6;
+use embedded_graphics::mono_font::MonoTextStyle;
+use embedded_graphics::pixelcolor::BinaryColor;
+use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::Rectangle;
 use embedded_hal::digital::v2::OutputPin;
+use embedded_text::alignment::HorizontalAlignment;
+use embedded_text::style::{HeightMode, TextBoxStyleBuilder};
+use embedded_text::TextBox;
 use embedded_time::duration::Extensions;
 use log::{error, info, LevelFilter};
 use log::{Level, Metadata, Record};
 use nb::block;
 use rp_pico::hal::clocks::{self, ClocksManager};
-use rp_pico::hal::gpio::{FunctionUart, I2C};
+use rp_pico::hal::gpio::{bank0::*, DynPin, Function};
+use rp_pico::hal::gpio::{FunctionUart, Pin, I2C};
 use rp_pico::hal::uart::{self, UartPeripheral};
 use rp_pico::hal::{self, Clock};
 use rp_pico::{
     hal::{
-        gpio::{bank0::*, DynPin, Function, Pin},
         pac::{self, interrupt},
         sio::Sio,
         timer::Timer,
@@ -32,6 +41,7 @@ use rp_pico::{
     },
     Pins,
 };
+use ssd1306::mode::BufferedGraphicsMode;
 use ssd1306::{prelude::*, size::DisplaySize128x32, I2CDisplayInterface, Ssd1306};
 use usb_device::class_prelude::*;
 use usbd_hid::descriptor::KeyboardReport;
@@ -40,15 +50,16 @@ use usbd_hid::descriptor::KeyboardReport;
 #[used]
 pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GD25Q64CS;
 
-type OledDisplay = app::oled_display::OledDisplay<
+type BufferedSsd1306 = Ssd1306<
     I2CInterface<hal::I2C<pac::I2C1, (Pin<Gpio14, Function<I2C>>, Pin<Gpio15, Function<I2C>>)>>,
     DisplaySize128x32,
+    BufferedGraphicsMode<DisplaySize128x32>,
 >;
 
 static USB_MANAGER: Mutex<RefCell<Option<app::usb::UsbManager<hal::usb::UsbBus>>>> =
     Mutex::new(RefCell::new(None));
 static LOGGER: KeyboardLogger = KeyboardLogger;
-static OLED_DISPLAY: Mutex<RefCell<Option<OledDisplay>>> = Mutex::new(RefCell::new(None));
+static OLED_DISPLAY: Mutex<RefCell<Option<BufferedSsd1306>>> = Mutex::new(RefCell::new(None));
 
 const BASE_MAP: [KeyAction; 72] = [
     //row 0
@@ -457,9 +468,7 @@ fn main() -> ! {
         display.init().unwrap();
         display.flush().unwrap();
 
-        OLED_DISPLAY
-            .borrow(cs)
-            .replace(Some(OledDisplay::new(display, timer.get_counter())));
+        OLED_DISPLAY.borrow(cs).replace(Some(display));
 
         //Init USB
         static mut USB_BUS: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
@@ -539,12 +548,10 @@ fn start<U>(
 where
     U: embedded_hal::serial::Read<u8>,
 {
+    let mut oled_display = OledDisplay::new(&OLED_DISPLAY, &timer);
+
     // Splash screen
-    cortex_m::interrupt::free(|cs| {
-        let mut oled_display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
-        let oled_display = oled_display_ref.as_mut().unwrap();
-        oled_display.draw_text_screen("Starting...").unwrap();
-    });
+    oled_display.draw_text_screen("Starting...").unwrap();
 
     let mut cd = timer.count_down();
     cd.start(2.seconds());
@@ -567,8 +574,6 @@ where
     slow_countdown.start(20.milliseconds());
 
     //let mut led_pin = pins.led.into_readable_output();
-
-    let mut last_keypress_time = timer.get_counter();
 
     info!("Running main loop");
     loop {
@@ -602,33 +607,14 @@ where
                 }
             });
 
-            if keyboard_report.modifier != 0 || keyboard_report.keycodes.iter().any(|&k| k != 0) {
-                last_keypress_time = timer.get_counter();
-            }
-
-            if timer.get_counter().wrapping_sub(last_keypress_time) > 10_000_000 {
-                //10 seconds
-                cortex_m::interrupt::free(|cs| {
-                    let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
-                    if let Some(display) = display_ref.as_mut() {
-                        display.draw_screen_saver().ok();
-                    }
-                });
-            } else {
-                cortex_m::interrupt::free(|cs| {
-                    let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
-                    if let Some(display) = display_ref.as_mut() {
-                        display
-                            .draw_right_display(
-                                led.into(),
-                                keyboard_report.modifier.into(),
-                                keyboard_report.keycodes,
-                                keyboard_state.layer,
-                            )
-                            .ok();
-                    }
-                });
-            }
+            oled_display
+                .draw_left_display(
+                    led.into(),
+                    keyboard_report.modifier.into(),
+                    keyboard_report.keycodes,
+                    keyboard_state.layer,
+                )
+                .ok();
         }
     }
 }
@@ -717,9 +703,27 @@ fn panic(info: &PanicInfo) -> ! {
         cortex_m::interrupt::free(|cs| {
             let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
             if let Some(display) = display_ref.as_mut() {
-                display.draw_text_screen(output.as_str()).ok();
+                display.clear();
+                let character_style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
+                let textbox_style = TextBoxStyleBuilder::new()
+                    .height_mode(HeightMode::FitToText)
+                    .alignment(HorizontalAlignment::Left)
+                    .build();
+                let bounds = Rectangle::new(Point::zero(), Size::new(32, 0));
+                let text_box = TextBox::with_textbox_style(
+                    output.as_str(),
+                    bounds,
+                    character_style,
+                    textbox_style,
+                );
+
+                text_box.draw(display)?;
+                display.flush()
+            } else {
+                Ok(())
             }
-        });
+        })
+        .ok();
     }
 
     loop {

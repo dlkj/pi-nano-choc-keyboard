@@ -1,6 +1,8 @@
+use core::cell::RefCell;
 use core::fmt::Write;
+use cortex_m::interrupt::Mutex;
 use display_interface::DisplayError;
-use embedded_graphics::primitives::{Line, RoundedRectangle};
+use embedded_graphics::primitives::RoundedRectangle;
 use embedded_graphics::{
     image::{Image, ImageRawLE},
     mono_font::{ascii::*, MonoTextStyle},
@@ -16,50 +18,71 @@ use embedded_text::{
 };
 use rand::prelude::SmallRng;
 use rand::{RngCore, SeedableRng};
-use ssd1306::mode::BufferedGraphicsMode;
-use ssd1306::{prelude::*, Ssd1306};
+use rp_pico::hal::Timer;
 
 use crate::keyboard;
 
-pub struct OledDisplay<DI, SIZE>
+pub trait FlushableDisplay {
+    fn flush(&mut self) -> Result<(), DisplayError>;
+}
+
+impl<DI, SIZE> FlushableDisplay
+    for ssd1306::Ssd1306<DI, SIZE, ssd1306::mode::BufferedGraphicsMode<SIZE>>
 where
-    DI: WriteOnlyDataCommand,
-    SIZE: ssd1306::mode::TerminalDisplaySize,
+    DI: display_interface::WriteOnlyDataCommand,
+    SIZE: ssd1306::size::DisplaySize,
 {
-    display: Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>,
+    fn flush(&mut self) -> Result<(), display_interface::DisplayError> {
+        self.flush()
+    }
+}
+
+pub struct OledDisplay<'a, D> {
+    display: &'a Mutex<RefCell<Option<D>>>,
+    timer: &'a Timer,
+    last_active: u64,
     rng: SmallRng,
 }
 
-impl<DI, SIZE> OledDisplay<DI, SIZE>
+impl<'a, D> OledDisplay<'a, D>
 where
-    DI: WriteOnlyDataCommand,
-    SIZE: ssd1306::mode::TerminalDisplaySize,
+    D: DrawTarget<Color = BinaryColor, Error = DisplayError> + FlushableDisplay,
 {
-    pub fn new(
-        display: Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>,
-        rng_seed: u64,
-    ) -> OledDisplay<DI, SIZE> {
+    pub fn new(display: &'a Mutex<RefCell<Option<D>>>, timer: &'a Timer) -> OledDisplay<'a, D> {
+        let now = timer.get_counter();
+
         OledDisplay {
             display,
-            rng: SmallRng::seed_from_u64(rng_seed),
+            timer,
+            last_active: now,
+            rng: SmallRng::seed_from_u64(now),
         }
     }
 
+    fn exclusive<F>(&self, f: F) -> Result<(), DisplayError>
+    where
+        F: FnOnce(&mut D) -> Result<(), DisplayError>,
+    {
+        cortex_m::interrupt::free(|cs| {
+            let mut display_ref = self.display.borrow(cs).borrow_mut();
+            let display = display_ref.as_mut();
+            f(display.unwrap())
+        })
+    }
+
     pub fn draw_image(&mut self, data: &[u8], width: u32) -> Result<(), DisplayError> {
-        self.display.clear();
+        self.exclusive(|display| {
+            display.clear(BinaryColor::Off)?;
 
-        let img: ImageRawLE<BinaryColor> = ImageRawLE::new(data, width);
-        Image::new(&img, Point::new(32, 0))
-            .draw(&mut self.display)
-            .unwrap();
+            let img: ImageRawLE<BinaryColor> = ImageRawLE::new(data, width);
+            Image::new(&img, Point::new(32, 0)).draw(display)?;
 
-        self.display.flush()?;
-
-        Ok(())
+            display.flush()
+        })
     }
 
     fn draw_led_indicator(
-        display: &mut Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>,
+        display: &mut D,
         top_left: Point,
         text: &str,
     ) -> Result<(), DisplayError> {
@@ -83,7 +106,7 @@ where
     }
 
     fn draw_layer_indicator(
-        display: &mut Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>,
+        display: &mut D,
         top_left: Point,
         layer: usize,
     ) -> Result<(), DisplayError> {
@@ -110,7 +133,7 @@ where
     }
 
     fn draw_keycode_indicator(
-        display: &mut Ssd1306<DI, SIZE, BufferedGraphicsMode<SIZE>>,
+        display: &mut D,
         top_left: Point,
         modifier: keyboard::keycode::Modifiers,
         keycodes: [u8; 6],
@@ -140,42 +163,72 @@ where
         Ok(())
     }
 
-    pub fn draw_right_display(
+    pub fn draw_left_display(
         &mut self,
         leds: keyboard::keycode::Leds,
         modifier: keyboard::keycode::Modifiers,
         keycodes: [u8; 6],
         layer: usize,
     ) -> Result<(), DisplayError> {
-        self.display.clear();
+        let now = self.timer.get_counter();
 
-        //Led indicators
-        if leds.contains(keyboard::keycode::Leds::NUM_LOCK) {
-            Self::draw_led_indicator(&mut self.display, Point::new(0, 0), "1")?;
+        if !modifier.is_empty() || keycodes.iter().any(|&k| k != 0) {
+            self.last_active = now;
         }
 
-        if leds.contains(keyboard::keycode::Leds::CAP_LOCK) {
-            Self::draw_led_indicator(&mut self.display, Point::new(12, 0), "C")?;
+        if now - self.last_active > 10_000_000 {
+            self.draw_screen_saver()
+        } else {
+            self.exclusive(|display| {
+                display.clear(BinaryColor::Off)?;
+
+                //Led indicators
+                if leds.contains(keyboard::keycode::Leds::CAP_LOCK) {
+                    Self::draw_led_indicator(display, Point::new(0, 0), "C")?;
+                }
+
+                if leds.contains(keyboard::keycode::Leds::NUM_LOCK) {
+                    Self::draw_led_indicator(display, Point::new(12, 0), "1")?;
+                }
+
+                if leds.contains(keyboard::keycode::Leds::SCROLL_LOCK) {
+                    Self::draw_led_indicator(display, Point::new(24, 0), "S")?;
+                }
+
+                //Layer
+                Self::draw_layer_indicator(display, Point::new(0, 13), layer)?;
+
+                //Keycode indicator
+                Self::draw_keycode_indicator(display, Point::new(0, 112), modifier, keycodes)?;
+
+                display.flush()
+            })
         }
-
-        if leds.contains(keyboard::keycode::Leds::SCROLL_LOCK) {
-            Self::draw_led_indicator(&mut self.display, Point::new(24, 0), "S")?;
-        }
-
-        //Layer
-        Self::draw_layer_indicator(&mut self.display, Point::new(0, 13), layer)?;
-
-        //Keycode indicator
-        Self::draw_keycode_indicator(&mut self.display, Point::new(0, 112), modifier, keycodes)?;
-
-        self.display.flush()?;
-
-        Ok(())
     }
 
-    pub fn draw_screen_saver(&mut self) -> Result<(), DisplayError> {
-        self.display.clear();
+    pub fn draw_right_display(&mut self, pressed_keys: &[usize]) -> Result<(), DisplayError> {
+        let now = self.timer.get_counter();
 
+        if !pressed_keys.len() != 0 {
+            self.last_active = now;
+        }
+
+        if now - self.last_active > 10_000_000 {
+            self.draw_screen_saver()
+        } else {
+            let mut output = arrayvec::ArrayString::<1024>::new();
+            if write!(&mut output, "k:\ns{:#02?}\n", &pressed_keys)
+                .ok()
+                .is_some()
+            {
+                self.draw_text_screen(output.as_str())?
+            }
+
+            Ok(())
+        }
+    }
+
+    fn draw_screen_saver(&mut self) -> Result<(), DisplayError> {
         let pixels = [Pixel(
             Point::new(
                 self.rng.next_u32() as i32 % 32,
@@ -183,39 +236,30 @@ where
             ),
             BinaryColor::On,
         )];
-        self.display.draw_iter(pixels)?;
 
-        self.display.flush()?;
-        Ok(())
+        self.exclusive(|display| {
+            display.clear(BinaryColor::Off)?;
+            display.draw_iter(pixels)?;
+            display.flush()
+        })
     }
 
     pub fn draw_text_screen(&mut self, text: &str) -> Result<(), DisplayError> {
-        self.display.clear();
-        let character_style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
-        let textbox_style = TextBoxStyleBuilder::new()
-            .height_mode(HeightMode::FitToText)
-            .alignment(HorizontalAlignment::Left)
-            .build();
-        let bounds = Rectangle::new(Point::zero(), Size::new(32, 0));
-        let text_box = TextBox::with_textbox_style(text, bounds, character_style, textbox_style);
+        self.exclusive(|display| {
+            display.clear(BinaryColor::Off)?;
+            let character_style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
+            let textbox_style = TextBoxStyleBuilder::new()
+                .height_mode(HeightMode::FitToText)
+                .alignment(HorizontalAlignment::Left)
+                .build();
+            let bounds = Rectangle::new(Point::zero(), Size::new(32, 0));
+            let text_box =
+                TextBox::with_textbox_style(text, bounds, character_style, textbox_style);
 
-        text_box.draw(&mut self.display).unwrap();
-        self.display.flush()?;
+            text_box.draw(display)?;
+            display.flush()?;
 
-        Ok(())
-    }
-
-    pub fn draw_pin_log(&mut self, data: &[bool]) {
-        self.display.clear();
-        for (i, d) in data.iter().enumerate() {
-            Line::new(
-                Point::new(i as i32, 64),
-                Point::new(i as i32, if *d { 60 } else { 62 }),
-            )
-            .into_styled(PrimitiveStyle::with_stroke(BinaryColor::On, 1))
-            .draw(&mut self.display)
-            .unwrap();
-        }
-        self.display.flush().unwrap();
+            Ok(())
+        })
     }
 }
