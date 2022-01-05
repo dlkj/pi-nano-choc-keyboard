@@ -37,11 +37,16 @@ where
     }
 }
 
+struct ScreensaverState {
+    points: [Point; 32],
+}
+
 pub struct OledDisplay<'a, D> {
     display: &'a Mutex<RefCell<Option<D>>>,
     timer: &'a Timer,
     last_active: u64,
     rng: SmallRng,
+    screensaver_state: ScreensaverState,
 }
 
 impl<'a, D> OledDisplay<'a, D>
@@ -51,11 +56,20 @@ where
     pub fn new(display: &'a Mutex<RefCell<Option<D>>>, timer: &'a Timer) -> OledDisplay<'a, D> {
         let now = timer.get_counter();
 
+        let mut rng = SmallRng::seed_from_u64(now);
+
+        let mut points = [Point::default(); 32];
+        for p in points.iter_mut() {
+            p.x = (rng.next_u32() as i32) % 320;
+            p.y = (rng.next_u32() as i32) % 1280;
+        }
+
         OledDisplay {
             display,
             timer,
             last_active: now,
-            rng: SmallRng::seed_from_u64(now),
+            rng,
+            screensaver_state: ScreensaverState { points },
         }
     }
 
@@ -209,7 +223,7 @@ where
     pub fn draw_right_display(&mut self, pressed_keys: &[usize]) -> Result<(), DisplayError> {
         let now = self.timer.get_counter();
 
-        if !pressed_keys.len() != 0 {
+        if !pressed_keys.is_empty() {
             self.last_active = now;
         }
 
@@ -229,19 +243,39 @@ where
     }
 
     fn draw_screen_saver(&mut self) -> Result<(), DisplayError> {
-        let pixels = [Pixel(
-            Point::new(
-                self.rng.next_u32() as i32 % 32,
-                self.rng.next_u32() as i32 % 128,
-            ),
-            BinaryColor::On,
-        )];
+        let pixels = self
+            .screensaver_state
+            .points
+            .iter()
+            .map(|&p| Pixel(p / 10, BinaryColor::On));
 
         self.exclusive(|display| {
             display.clear(BinaryColor::Off)?;
             display.draw_iter(pixels)?;
             display.flush()
-        })
+        })?;
+
+        for p in self.screensaver_state.points.iter_mut() {
+            let tmp = *p;
+
+            let velocity = (tmp - Point::new(160, 640)) / 20;
+
+            *p = tmp
+                + if velocity.x == 0 && velocity.y == 0 {
+                    Point::new(1, 1)
+                } else {
+                    velocity
+                };
+
+            if !Rectangle::new(Point::zero(), Size::new(320, 1280)).contains(*p) {
+                *p = Point::new(
+                    self.rng.next_u32() as i32 % 320,
+                    self.rng.next_u32() as i32 % 1280,
+                );
+            }
+        }
+
+        Ok(())
     }
 
     pub fn draw_text_screen(&mut self, text: &str) -> Result<(), DisplayError> {
