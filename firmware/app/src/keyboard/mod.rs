@@ -1,6 +1,5 @@
 use crate::debounce::DebouncedPin;
 use crate::keyboard::keycode::KeyCode;
-use crate::keyboard::keycode::Modifiers;
 use arrayvec::ArrayVec;
 use embedded_hal::digital::v2::InputPin;
 use embedded_hal::digital::v2::OutputPin;
@@ -207,7 +206,6 @@ where
 }
 
 pub struct KeyboardLayoutState<const KEY_COUNT: usize> {
-    pub modifiers: Modifiers,
     pub keycodes: ArrayVec<KeyCode, KEY_COUNT>,
     pub layer: usize,
 }
@@ -255,7 +253,6 @@ impl<const N: usize, const L: usize> KeyboardLayout<N> for LayerdKeyboardLayout<
             }
         }
 
-        let mut modifiers = Modifiers::empty();
         let mut keycodes = arrayvec::ArrayVec::new();
 
         for (i, _) in keys.iter().enumerate().filter(|(_, &k)| k.pressed) {
@@ -274,25 +271,26 @@ impl<const N: usize, const L: usize> KeyboardLayout<N> for LayerdKeyboardLayout<
 
             match key {
                 KeyAction::Key { code } => {
-                    if code.is_modifier() {
-                        modifiers |= Modifiers::from(code);
-                    } else {
-                        keycodes.push(code);
-                    }
+                    keycodes.push(code);
                 }
                 KeyAction::None => {
                     //do nothing
                 }
                 KeyAction::Function { function: f } => match f {
                     KeyFunction::Hyper => {
-                        modifiers |= Modifiers::SHIFT_LEFT
-                            | Modifiers::CTRL_LEFT
-                            | Modifiers::ALT_LEFT
-                            | Modifiers::GUI_LEFT;
+                        keycodes.extend([
+                            KeyCode::LeftShift,
+                            KeyCode::LeftControl,
+                            KeyCode::LeftAlt,
+                            KeyCode::LeftGUI,
+                        ]);
                     }
                     KeyFunction::Meh => {
-                        modifiers |=
-                            Modifiers::SHIFT_LEFT | Modifiers::CTRL_LEFT | Modifiers::ALT_LEFT;
+                        keycodes.extend([
+                            KeyCode::LeftShift,
+                            KeyCode::LeftControl,
+                            KeyCode::LeftAlt,
+                        ]);
                     }
                 },
                 KeyAction::Layer { .. } => {
@@ -305,7 +303,6 @@ impl<const N: usize, const L: usize> KeyboardLayout<N> for LayerdKeyboardLayout<
         }
 
         KeyboardLayoutState {
-            modifiers,
             keycodes,
             layer: max_layer,
         }
@@ -313,7 +310,6 @@ impl<const N: usize, const L: usize> KeyboardLayout<N> for LayerdKeyboardLayout<
 }
 
 pub struct KeyboardState<const KEY_COUNT: usize> {
-    pub modifiers: Modifiers,
     pub keycodes: ArrayVec<KeyCode, KEY_COUNT>,
     pub keys: [KeyState; KEY_COUNT],
     pub layer: usize,
@@ -339,7 +335,6 @@ where
         let layout_state = self.layout.state(&keys);
 
         Ok(KeyboardState {
-            modifiers: layout_state.modifiers,
             keycodes: layout_state.keycodes,
             keys,
             layer: layout_state.layer,

@@ -186,10 +186,13 @@ where
     ) -> Result<(), DisplayError> {
         let now = self.timer.get_counter();
 
-        let mut keycodes = keycodes.into_iter();
-
-        let modifier_active = keycodes.any(|k| k.is_modifier());
-        let key_active = keycodes.any(|k| !k.is_modifier() && k >= KeyCode::A);
+        let (modifier_active, key_active) =
+            keycodes.into_iter().fold((false, false), |(am, ak), k| {
+                (
+                    am || k.is_modifier(),
+                    ak || !k.is_modifier() && k >= KeyCode::A,
+                )
+            });
 
         if modifier_active || key_active {
             self.last_active = now;

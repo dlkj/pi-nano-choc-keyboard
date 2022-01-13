@@ -1,16 +1,14 @@
 #![no_std]
 #![no_main]
 
-//USB serial console (minicom -b 115200 -o -D /dev/ttyACM0)
-
 use app::keyboard::keycode::*;
 use app::keyboard::*;
 use app::oled_display::OledDisplay;
 use app::usb::UsbManager;
 use core::cell::RefCell;
+use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::sync::atomic::{self, Ordering};
-use core::{fmt, fmt::Write};
 use cortex_m::interrupt::Mutex;
 use cortex_m::prelude::*;
 use cortex_m_rt::entry;
@@ -25,7 +23,6 @@ use embedded_text::style::{HeightMode, TextBoxStyleBuilder};
 use embedded_text::TextBox;
 use embedded_time::duration::Extensions;
 use log::{error, info, LevelFilter};
-use log::{Level, Metadata, Record};
 use nb::block;
 use rp_pico::hal::clocks::{self, ClocksManager};
 use rp_pico::hal::gpio::{bank0::*, DynPin, Function};
@@ -34,7 +31,7 @@ use rp_pico::hal::uart::{self, UartPeripheral};
 use rp_pico::hal::{self, Clock};
 use rp_pico::{
     hal::{
-        pac::{self, interrupt},
+        pac::{self},
         sio::Sio,
         timer::Timer,
         watchdog::Watchdog,
@@ -58,7 +55,6 @@ type BufferedSsd1306 = Ssd1306<
 
 static USB_MANAGER: Mutex<RefCell<Option<app::usb::UsbManager<hal::usb::UsbBus>>>> =
     Mutex::new(RefCell::new(None));
-static LOGGER: KeyboardLogger = KeyboardLogger;
 static OLED_DISPLAY: Mutex<RefCell<Option<BufferedSsd1306>>> = Mutex::new(RefCell::new(None));
 
 const BASE_MAP: [KeyAction; 72] = [
@@ -488,8 +484,6 @@ fn main() -> ! {
                 //https://pid.codes
                 0x0002,
             )));
-
-            log::set_logger_racy(&LOGGER).unwrap();
         }
     });
 
@@ -615,54 +609,6 @@ where
                 .ok();
         }
     }
-}
-
-#[allow(non_snake_case)]
-#[interrupt]
-fn USBCTRL_IRQ() {
-    cortex_m::interrupt::free(|cs| {
-        let mut usb_ref = USB_MANAGER.borrow(cs).borrow_mut();
-        if let Some(usb) = usb_ref.as_mut() {
-            usb.service_irq();
-        }
-    });
-    cortex_m::asm::sev();
-}
-
-pub struct KeyboardLogger;
-
-impl fmt::Write for KeyboardLogger {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        cortex_m::interrupt::free(|cs| {
-            let mut usb_ref = USB_MANAGER.borrow(cs).borrow_mut();
-            if let Some(usb) = usb_ref.as_mut() {
-                usb.serial_port_borrow_mut()
-                    .write(s.as_bytes())
-                    .map_or_else(
-                        |_error| fmt::Result::Err(fmt::Error),
-                        |_c| fmt::Result::Ok(()),
-                    )
-            } else {
-                fmt::Result::Ok(())
-            }
-        })
-    }
-}
-
-impl log::Log for KeyboardLogger {
-    fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= Level::Info
-    }
-
-    fn log(&self, record: &Record) {
-        if self.enabled(record.metadata()) {
-            let mut writer = KeyboardLogger;
-            //Errors are likely due to serial port not connected, better to swallow failures than panic
-            write!(&mut writer, "{} - {}\r\n", record.level(), record.args()).ok();
-        }
-    }
-
-    fn flush(&self) {}
 }
 
 #[inline(never)]

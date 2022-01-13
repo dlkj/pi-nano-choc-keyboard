@@ -7,9 +7,9 @@ use app::keyboard::*;
 use app::oled_display::OledDisplay;
 use app::usb::UsbManager;
 use core::cell::RefCell;
+use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::sync::atomic::{self, Ordering};
-use core::{fmt, fmt::Write};
 use cortex_m::interrupt::Mutex;
 use cortex_m::prelude::_embedded_hal_timer_CountDown;
 use cortex_m_rt::entry;
@@ -24,7 +24,6 @@ use embedded_text::style::{HeightMode, TextBoxStyleBuilder};
 use embedded_text::TextBox;
 use embedded_time::duration::Extensions;
 use log::{error, info, LevelFilter};
-use log::{Level, Metadata, Record};
 use nb::block;
 use rp_pico::hal::clocks::{self, ClocksManager};
 use rp_pico::hal::gpio::{FunctionUart, I2C};
@@ -56,7 +55,6 @@ type BufferedSsd1306 = Ssd1306<
 
 static USB_MANAGER: Mutex<RefCell<Option<UsbManager<hal::usb::UsbBus>>>> =
     Mutex::new(RefCell::new(None));
-static LOGGER: Logger = Logger {};
 static OLED_DISPLAY: Mutex<RefCell<Option<BufferedSsd1306>>> = Mutex::new(RefCell::new(None));
 
 #[entry]
@@ -128,8 +126,6 @@ fn main() -> ! {
                 //https://pid.codes
                 0x0003,
             )));
-
-            log::set_logger_racy(&LOGGER).unwrap();
         }
     });
 
@@ -250,42 +246,6 @@ fn USBCTRL_IRQ() {
         }
     });
     cortex_m::asm::sev();
-}
-
-pub struct Logger {}
-
-impl fmt::Write for Logger {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        cortex_m::interrupt::free(|cs| {
-            let mut usb_ref = USB_MANAGER.borrow(cs).borrow_mut();
-            if let Some(usb) = usb_ref.as_mut() {
-                usb.serial_port_borrow_mut()
-                    .write(s.as_bytes())
-                    .map_or_else(
-                        |_error| fmt::Result::Err(fmt::Error),
-                        |_c| fmt::Result::Ok(()),
-                    )
-            } else {
-                fmt::Result::Ok(())
-            }
-        })
-    }
-}
-
-impl log::Log for Logger {
-    fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= Level::Info
-    }
-
-    fn log(&self, record: &Record) {
-        if self.enabled(record.metadata()) {
-            let mut writer = Logger {};
-            //Errors are likely due to serial port not connected, better to swallow failures than panic
-            write!(&mut writer, "{} - {}\r\n", record.level(), record.args()).ok();
-        }
-    }
-
-    fn flush(&self) {}
 }
 
 #[inline(never)]

@@ -19,16 +19,16 @@ where
     B: usb_device::bus::UsbBus,
 {
     pub fn new(usb_bus: &'a UsbBusAllocator<B>, pid: u16) -> UsbManager<'a, B> {
-        let serial_port = SerialPort::new(usb_bus);
         let keyboard = usbd_hid_devices::hid::UsbHidClass::new(
             usb_bus,
             usbd_hid_devices::keyboard::HidBootKeyboard::default(),
         );
+        let serial_port = SerialPort::new(usb_bus);
 
         // Create a USB device with https://pid.code VID and a test PID
         let usb_device = UsbDeviceBuilder::new(usb_bus, UsbVidPid(0x1209, pid))
             .manufacturer("DLKJ")
-            .product("Pi-Nano-Choc")
+            .product("pi-nano-choc")
             .serial_number("TEST")
             .device_class(0x00) // from: https://www.usb.org/defined-class-codes
             .composite_with_iads()
@@ -46,16 +46,15 @@ where
         &mut self.keyboard
     }
 
-    pub fn serial_port_borrow_mut(&mut self) -> &mut SerialPort<'a, B> {
-        &mut self.serial_port
-    }
-
     pub fn keyboard_led(&self) -> u8 {
         self.keyboard_led
     }
 
+    pub fn write_serial(&mut self, data: &[u8]) -> usb_device::Result<usize> {
+        self.serial_port.write(data)
+    }
+
     pub fn service_irq(&mut self) {
-        // Poll the USB driver with all of our supported USB Classes
         if self
             .usb_device
             .poll(&mut [&mut self.serial_port, &mut self.keyboard])
