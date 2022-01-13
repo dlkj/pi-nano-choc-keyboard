@@ -123,9 +123,11 @@ fn main() -> ! {
                 &mut pac.RESETS,
             )));
 
-            USB_MANAGER
-                .borrow(cs)
-                .replace(Some(UsbManager::new(USB_BUS.as_ref().unwrap())));
+            USB_MANAGER.borrow(cs).replace(Some(UsbManager::new(
+                USB_BUS.as_ref().unwrap(),
+                //https://pid.codes
+                0x0003,
+            )));
 
             log::set_logger_racy(&LOGGER).unwrap();
         }

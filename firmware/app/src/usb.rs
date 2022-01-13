@@ -1,8 +1,7 @@
 use usb_device::class_prelude::*;
 use usb_device::prelude::*;
-use usbd_hid::descriptor::KeyboardReport;
-use usbd_hid::descriptor::SerializedDescriptor;
-use usbd_hid::hid_class::HIDClass;
+use usbd_hid_devices::hid::UsbHidClass;
+use usbd_hid_devices::keyboard::*;
 use usbd_serial::SerialPort;
 
 pub struct UsbManager<'a, B>
@@ -11,7 +10,7 @@ where
 {
     usb_device: UsbDevice<'a, B>,
     serial_port: SerialPort<'a, B>,
-    keyboard: HIDClass<'a, B>,
+    keyboard: UsbHidClass<'a, B, HidBootKeyboard>,
     keyboard_led: u8,
 }
 
@@ -19,16 +18,21 @@ impl<'a, B> UsbManager<'a, B>
 where
     B: usb_device::bus::UsbBus,
 {
-    pub fn new(usb_bus: &'a UsbBusAllocator<B>) -> UsbManager<'a, B> {
+    pub fn new(usb_bus: &'a UsbBusAllocator<B>, pid: u16) -> UsbManager<'a, B> {
         let serial_port = SerialPort::new(usb_bus);
-        let keyboard = HIDClass::new(usb_bus, KeyboardReport::desc(), 20);
+        let keyboard = usbd_hid_devices::hid::UsbHidClass::new(
+            usb_bus,
+            usbd_hid_devices::keyboard::HidBootKeyboard::default(),
+        );
 
-        // Create a USB device with a fake VID and PID
-        let usb_device = UsbDeviceBuilder::new(usb_bus, UsbVidPid(0x16c0, 0x27dd))
-            .manufacturer("Adafruit")
-            .product("Macropad")
+        // Create a USB device with https://pid.code VID and a test PID
+        let usb_device = UsbDeviceBuilder::new(usb_bus, UsbVidPid(0x1209, pid))
+            .manufacturer("DLKJ")
+            .product("Pi-Nano-Choc")
             .serial_number("TEST")
             .device_class(0x00) // from: https://www.usb.org/defined-class-codes
+            .composite_with_iads()
+            .supports_remote_wakeup(true)
             .build();
 
         UsbManager {
@@ -38,8 +42,7 @@ where
             keyboard_led: 0,
         }
     }
-
-    pub fn keyboard_borrow_mut(&mut self) -> &mut HIDClass<'a, B> {
+    pub fn keyboard_borrow_mut(&mut self) -> &mut UsbHidClass<'a, B, HidBootKeyboard> {
         &mut self.keyboard
     }
 
@@ -60,9 +63,8 @@ where
             let mut buf = [0u8; 64];
             self.serial_port.read(&mut buf).ok(); //discard incoming data
 
-            let mut buf = [0u8; 64];
-            if let Ok(1) = self.keyboard.pull_raw_output(&mut buf) {
-                self.keyboard_led = buf[0];
+            if let Ok(leds) = self.keyboard.read_leds() {
+                self.keyboard_led = leds;
             }
         }
     }

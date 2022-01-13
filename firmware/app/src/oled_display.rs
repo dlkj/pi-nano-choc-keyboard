@@ -1,3 +1,4 @@
+use crate::keyboard::keycode::KeyCode;
 use core::cell::RefCell;
 use core::fmt::Write;
 use cortex_m::interrupt::Mutex;
@@ -149,14 +150,14 @@ where
     fn draw_keycode_indicator(
         display: &mut D,
         top_left: Point,
-        modifier: keyboard::keycode::Modifiers,
-        keycodes: [u8; 6],
+        modifier: bool,
+        keycodes: bool,
     ) -> Result<(), DisplayError> {
         let thin_stroke = PrimitiveStyle::with_stroke(BinaryColor::On, 1);
         let bounding_box = Rectangle::new(top_left, Size::new(32, 16));
         let fill = PrimitiveStyle::with_fill(BinaryColor::On);
 
-        if !modifier.is_empty() {
+        if modifier {
             RoundedRectangle::with_equal_corners(
                 Rectangle::with_center(bounding_box.center(), Size::new(16, 16)),
                 Size::new(3, 3),
@@ -165,7 +166,7 @@ where
             .draw(display)?;
         }
 
-        if keycodes.iter().any(|&k| k != 0) {
+        if keycodes {
             RoundedRectangle::with_equal_corners(
                 Rectangle::with_center(bounding_box.center(), Size::new(12, 12)),
                 Size::new(2, 2),
@@ -177,16 +178,20 @@ where
         Ok(())
     }
 
-    pub fn draw_left_display(
+    pub fn draw_left_display<K: IntoIterator<Item = KeyCode>>(
         &mut self,
         leds: keyboard::keycode::Leds,
-        modifier: keyboard::keycode::Modifiers,
-        keycodes: [u8; 6],
+        keycodes: K,
         layer: usize,
     ) -> Result<(), DisplayError> {
         let now = self.timer.get_counter();
 
-        if !modifier.is_empty() || keycodes.iter().any(|&k| k != 0) {
+        let mut keycodes = keycodes.into_iter();
+
+        let modifier_active = keycodes.any(|k| k.is_modifier());
+        let key_active = keycodes.any(|k| !k.is_modifier() && k >= KeyCode::A);
+
+        if modifier_active || key_active {
             self.last_active = now;
         }
 
@@ -213,7 +218,12 @@ where
                 Self::draw_layer_indicator(display, Point::new(0, 13), layer)?;
 
                 //Keycode indicator
-                Self::draw_keycode_indicator(display, Point::new(0, 112), modifier, keycodes)?;
+                Self::draw_keycode_indicator(
+                    display,
+                    Point::new(0, 112),
+                    modifier_active,
+                    key_active,
+                )?;
 
                 display.flush()
             })

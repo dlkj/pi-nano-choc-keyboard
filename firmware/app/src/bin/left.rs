@@ -44,7 +44,7 @@ use rp_pico::{
 use ssd1306::mode::BufferedGraphicsMode;
 use ssd1306::{prelude::*, size::DisplaySize128x32, I2CDisplayInterface, Ssd1306};
 use usb_device::class_prelude::*;
-use usbd_hid::descriptor::KeyboardReport;
+use usbd_hid_devices::keyboard::HidKeyboard;
 
 #[link_section = ".boot2"]
 #[used]
@@ -483,9 +483,11 @@ fn main() -> ! {
                 &mut pac.RESETS,
             )));
 
-            USB_MANAGER
-                .borrow(cs)
-                .replace(Some(UsbManager::new(USB_BUS.as_ref().unwrap())));
+            USB_MANAGER.borrow(cs).replace(Some(UsbManager::new(
+                USB_BUS.as_ref().unwrap(),
+                //https://pid.codes
+                0x0002,
+            )));
 
             log::set_logger_racy(&LOGGER).unwrap();
         }
@@ -595,53 +597,23 @@ where
 
             //100Hz or slower
             let keyboard_state = keyboard.state().unwrap();
-            let keyboard_report = get_hid_report(&keyboard_state);
 
             let mut led = 0;
             //todo - spin lock until usb ready to recive, reset timers
             cortex_m::interrupt::free(|cs| {
                 let mut usb_ref = USB_MANAGER.borrow(cs).borrow_mut();
                 if let Some(usb) = usb_ref.as_mut() {
-                    usb.keyboard_borrow_mut().push_input(&keyboard_report).ok();
+                    usb.keyboard_borrow_mut()
+                        .write_keycodes(keyboard_state.keycodes.iter().map(|&k| k as u8))
+                        .ok();
                     led = usb.keyboard_led();
                 }
             });
 
             oled_display
-                .draw_left_display(
-                    led.into(),
-                    keyboard_report.modifier.into(),
-                    keyboard_report.keycodes,
-                    keyboard_state.layer,
-                )
+                .draw_left_display(led.into(), keyboard_state.keycodes, keyboard_state.layer)
                 .ok();
         }
-    }
-}
-
-fn get_hid_report<const N: usize>(state: &KeyboardState<N>) -> KeyboardReport {
-    //get first 6 current keypresses and send to usb
-    let mut keycodes: [u8; 6] = [0, 0, 0, 0, 0, 0];
-
-    let mut keycodes_it = keycodes.iter_mut();
-
-    for k in &state.keycodes {
-        match keycodes_it.next() {
-            Some(kc) => {
-                *kc = *k as u8;
-            }
-            None => {
-                keycodes.fill(0x01); //Error roll over
-                break;
-            }
-        }
-    }
-
-    KeyboardReport {
-        modifier: state.modifiers.bits(),
-        leds: 0,
-        reserved: 0,
-        keycodes,
     }
 }
 
