@@ -203,7 +203,7 @@ const BASE_MAP: [KeyAction; 72] = [
         code: KeyCode::None,
     },
 ];
-const LOWER_MAP: [KeyAction; 72] = [
+const UPPER_MAP: [KeyAction; 72] = [
     //row 0
     KeyAction::FallThrough,
     KeyAction::None,
@@ -309,7 +309,7 @@ const LOWER_MAP: [KeyAction; 72] = [
     KeyAction::FallThrough,
 ];
 
-const UPPER_MAP: [KeyAction; 72] = [
+const LOWER_MAP: [KeyAction; 72] = [
     //row 0
     KeyAction::FallThrough,
     KeyAction::Key { code: KeyCode::F1 },
