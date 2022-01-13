@@ -31,7 +31,7 @@ use rp_pico::hal::uart::{self, UartPeripheral};
 use rp_pico::hal::{self, Clock};
 use rp_pico::{
     hal::{
-        pac::{self},
+        pac::{self, interrupt},
         sio::Sio,
         timer::Timer,
         watchdog::Watchdog,
@@ -609,6 +609,18 @@ where
                 .ok();
         }
     }
+}
+
+#[allow(non_snake_case)]
+#[interrupt]
+fn USBCTRL_IRQ() {
+    cortex_m::interrupt::free(|cs| {
+        let mut usb_ref = USB_MANAGER.borrow(cs).borrow_mut();
+        if let Some(usb) = usb_ref.as_mut() {
+            usb.service_irq();
+        }
+    });
+    cortex_m::asm::sev();
 }
 
 #[inline(never)]
