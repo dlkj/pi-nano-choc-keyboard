@@ -23,7 +23,6 @@ use embedded_text::style::{HeightMode, TextBoxStyleBuilder};
 use embedded_text::TextBox;
 use embedded_time::duration::Extensions;
 use log::{error, info, LevelFilter};
-use nb::block;
 use rp_pico::hal::clocks::{self, ClocksManager};
 use rp_pico::hal::gpio::{bank0::*, DynPin, Function};
 use rp_pico::hal::gpio::{FunctionUart, Pin, I2C};
@@ -42,10 +41,6 @@ use ssd1306::mode::BufferedGraphicsMode;
 use ssd1306::{prelude::*, size::DisplaySize128x32, I2CDisplayInterface, Ssd1306};
 use usb_device::class_prelude::*;
 use usbd_hid_devices::keyboard::HidKeyboard;
-
-#[link_section = ".boot2"]
-#[used]
-pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_GD25Q64CS;
 
 type BufferedSsd1306 = Ssd1306<
     I2CInterface<hal::I2C<pac::I2C1, (Pin<Gpio14, Function<I2C>>, Pin<Gpio15, Function<I2C>>)>>,
@@ -421,9 +416,8 @@ fn main() -> ! {
 
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
 
-    let external_xtal_freq_hz = 12_000_000u32;
     let clocks: ClocksManager = clocks::init_clocks_and_plls(
-        external_xtal_freq_hz,
+        rp_pico::XOSC_CRYSTAL_FREQ,
         pac.XOSC,
         pac.CLOCKS,
         pac.PLL_SYS,
@@ -549,11 +543,7 @@ where
     // Splash screen
     oled_display.draw_text_screen("Starting...").unwrap();
 
-    let mut cd = timer.count_down();
-    cd.start(2.seconds());
-    block!(cd.wait()).unwrap();
-
-    info!("macropad starting");
+    info!("Starting");
 
     let mut keyboard = Keyboard::new(
         SplitMatrix {

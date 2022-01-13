@@ -198,7 +198,7 @@ where
             self.last_active = now;
         }
 
-        if now - self.last_active > 10_000_000 {
+        if now - self.last_active > 60_000_000 {
             self.draw_screen_saver()
         } else {
             self.exclusive(|display| {
@@ -240,7 +240,7 @@ where
             self.last_active = now;
         }
 
-        if now - self.last_active > 10_000_000 {
+        if now - self.last_active > 60_000_000 {
             self.draw_screen_saver()
         } else {
             let mut output = arrayvec::ArrayString::<1024>::new();

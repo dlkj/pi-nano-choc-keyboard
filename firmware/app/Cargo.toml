@@ -19,7 +19,6 @@ cortex-m = "0.7"
 cortex-m-rt = "0.7"
 embedded-hal = { version = "0.2", features=["unproven"] }
 usb-device= "0.2"
-usbd-serial = "0.1"
 ssd1306 = "0.7"
 rp-pico = { version = "0.2" }
 rp2040-boot2 = { version = "0.2" }

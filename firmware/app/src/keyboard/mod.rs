@@ -184,8 +184,7 @@ where
     fn update(&mut self) -> Result<(), Self::Error> {
         while let Ok(x) = self.uart.read() {
             if x == 0xFF {
-                self.current = self.next.clone();
-                self.next.clear();
+                self.current = self.next.take();
             } else {
                 self.next.push(x);
             }
