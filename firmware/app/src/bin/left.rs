@@ -556,6 +556,8 @@ fn main() -> ! {
 
     //let mut led_pin = pins.led.into_readable_output();
 
+    let mut leds = 0;
+
     info!("Running main loop");
     loop {
         //0.1ms scan the keys and debounce
@@ -583,7 +585,12 @@ fn main() -> ! {
                 .write_keycodes(keyboard_state.keycodes.iter().map(|&k| k as u8))
                 .ok();
 
-            let leds = usb_keyboard.read_leds().unwrap_or(0);
+            leds = match usb_keyboard.read_leds() {
+                Ok(leds) => leds,
+
+                Err(UsbError::WouldBlock) => leds,
+                Err(_) => 0,
+            };
 
             oled_display
                 .draw_left_display(leds.into(), keyboard_state.keycodes, keyboard_state.layer)
@@ -591,18 +598,6 @@ fn main() -> ! {
         }
     }
 }
-
-// #[allow(non_snake_case)]
-// #[interrupt]
-// fn USBCTRL_IRQ() {
-//     cortex_m::interrupt::free(|cs| {
-//         let mut usb_ref = USB_MANAGER.borrow(cs).borrow_mut();
-//         if let Some(usb) = usb_ref.as_mut() {
-//             usb.service_irq();
-//         }
-//     });
-//     cortex_m::asm::sev();
-// }
 
 #[inline(never)]
 #[panic_handler]

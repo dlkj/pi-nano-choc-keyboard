@@ -185,7 +185,7 @@ where
         while let Ok(x) = self.uart.read() {
             if x == 0xFF {
                 self.current = self.next.take();
-            } else {
+            } else if x < 36 {
                 self.next.push(x);
             }
         }
