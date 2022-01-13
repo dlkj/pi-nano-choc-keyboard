@@ -4,7 +4,6 @@
 use app::keyboard::keycode::*;
 use app::keyboard::*;
 use app::oled_display::OledDisplay;
-use app::usb::UsbManager;
 use core::cell::RefCell;
 use core::fmt::Write;
 use core::panic::PanicInfo;
@@ -30,7 +29,7 @@ use rp_pico::hal::uart::{self, UartPeripheral};
 use rp_pico::hal::{self, Clock};
 use rp_pico::{
     hal::{
-        pac::{self, interrupt},
+        pac::{self},
         sio::Sio,
         timer::Timer,
         watchdog::Watchdog,
@@ -40,6 +39,8 @@ use rp_pico::{
 use ssd1306::mode::BufferedGraphicsMode;
 use ssd1306::{prelude::*, size::DisplaySize128x32, I2CDisplayInterface, Ssd1306};
 use usb_device::class_prelude::*;
+use usb_device::prelude::UsbDeviceBuilder;
+use usb_device::prelude::UsbVidPid;
 use usbd_hid_devices::keyboard::HidKeyboard;
 
 type BufferedSsd1306 = Ssd1306<
@@ -48,8 +49,6 @@ type BufferedSsd1306 = Ssd1306<
     BufferedGraphicsMode<DisplaySize128x32>,
 >;
 
-static USB_MANAGER: Mutex<RefCell<Option<app::usb::UsbManager<hal::usb::UsbBus>>>> =
-    Mutex::new(RefCell::new(None));
 static OLED_DISPLAY: Mutex<RefCell<Option<BufferedSsd1306>>> = Mutex::new(RefCell::new(None));
 
 const BASE_MAP: [KeyAction; 72] = [
@@ -438,55 +437,64 @@ fn main() -> ! {
 
     let timer = Timer::new(pac.TIMER, &mut pac.RESETS);
 
+    //Init display
+    let scl_pin = pins.gpio15.into_mode::<hal::gpio::FunctionI2C>();
+    let sda_pin = pins.gpio14.into_mode::<hal::gpio::FunctionI2C>();
+
+    let i2c = hal::I2C::i2c1(
+        pac.I2C1,
+        sda_pin,
+        scl_pin,
+        embedded_time::rate::Extensions::kHz(400),
+        &mut pac.RESETS,
+        clocks.peripheral_clock.freq(),
+    );
+
+    let interface = I2CDisplayInterface::new(i2c);
+    let mut display = Ssd1306::new(interface, DisplaySize128x32, DisplayRotation::Rotate90)
+        .into_buffered_graphics_mode();
+    display.init().unwrap();
+    display.flush().unwrap();
+
     cortex_m::interrupt::free(|cs| {
-        //Init display
-        let scl_pin = pins.gpio15.into_mode::<hal::gpio::FunctionI2C>();
-        let sda_pin = pins.gpio14.into_mode::<hal::gpio::FunctionI2C>();
-
-        let i2c = hal::I2C::i2c1(
-            pac.I2C1,
-            sda_pin,
-            scl_pin,
-            embedded_time::rate::Extensions::kHz(400),
-            &mut pac.RESETS,
-            clocks.peripheral_clock.freq(),
-        );
-
-        let interface = I2CDisplayInterface::new(i2c);
-        let mut display = Ssd1306::new(interface, DisplaySize128x32, DisplayRotation::Rotate90)
-            .into_buffered_graphics_mode();
-        display.init().unwrap();
-        display.flush().unwrap();
-
         OLED_DISPLAY.borrow(cs).replace(Some(display));
-
-        //Init USB
-        static mut USB_BUS: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
-
-        // Note (safety): interupts not yet enabled
-        unsafe {
-            USB_BUS = Some(UsbBusAllocator::new(hal::usb::UsbBus::new(
-                pac.USBCTRL_REGS,
-                pac.USBCTRL_DPRAM,
-                clocks.usb_clock,
-                true,
-                &mut pac.RESETS,
-            )));
-
-            USB_MANAGER.borrow(cs).replace(Some(UsbManager::new(
-                USB_BUS.as_ref().unwrap(),
-                //https://pid.codes
-                0x0002,
-            )));
-        }
     });
+
+    //Init USB
+    let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
+        pac.USBCTRL_REGS,
+        pac.USBCTRL_DPRAM,
+        clocks.usb_clock,
+        true,
+        &mut pac.RESETS,
+    ));
+
+    // USB_MANAGER.borrow(cs).replace(Some(UsbManager::new(
+    //     USB_BUS.as_ref().unwrap(),
+    //     //https://pid.codes
+    //     0x0002,
+    // )));
+
+    let mut usb_keyboard = usbd_hid_devices::hid::UsbHidClass::new(
+        &usb_bus,
+        usbd_hid_devices::keyboard::HidBootKeyboard::default(),
+    );
+    // Create a USB device with https://pid.code VID and a test PID
+    let mut usb_device = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x1209, 0x02))
+        .manufacturer("DLKJ")
+        .product("pi-nano-choc")
+        .serial_number("TEST")
+        .device_class(0x03) //HID - from: https://www.usb.org/defined-class-codes
+        // .composite_with_iads()
+        // .supports_remote_wakeup(true)
+        .build();
 
     log::set_max_level(LevelFilter::Info);
 
     // Enable the USB interrupt
-    unsafe {
-        pac::NVIC::unmask(hal::pac::Interrupt::USBCTRL_IRQ);
-    };
+    // unsafe {
+    //     pac::NVIC::unmask(hal::pac::Interrupt::USBCTRL_IRQ);
+    // };
 
     // let rot_pin_a = DebouncedPin::<DynPin>::new(pins.gpio16.into_pull_up_input().into(), true);
     // let rot_pin_b = DebouncedPin::<DynPin>::new(pins.gpio17.into_pull_up_input().into(), true);
@@ -525,19 +533,6 @@ fn main() -> ! {
     let _tx_pin = pins.gpio12.into_mode::<FunctionUart>();
     let _rx_pin = pins.gpio13.into_mode::<FunctionUart>();
 
-    start(timer, uart, KEY_MAP, rows, cols);
-}
-
-fn start<U>(
-    timer: Timer,
-    uart: U,
-    keymaps: [[KeyAction; 72]; 3],
-    rows: [DynPin; 6],
-    cols: [DynPin; 6],
-) -> !
-where
-    U: embedded_hal::serial::Read<u8>,
-{
     let mut oled_display = OledDisplay::new(&OLED_DISPLAY, &timer);
 
     // Splash screen
@@ -550,7 +545,7 @@ where
             matrix1: DiodePinMatrix::new(rows, cols),
             matrix2: UartMatrix::new(uart),
         },
-        LayerdKeyboardLayout::new(keymaps),
+        LayerdKeyboardLayout::new(KEY_MAP),
     );
 
     let mut fast_countdown = timer.count_down();
@@ -573,6 +568,8 @@ where
             //rot_enc.update();
 
             keyboard.update().expect("Failed to update keyboard");
+
+            usb_device.poll(&mut [&mut usb_keyboard]);
         }
 
         //10ms
@@ -582,36 +579,30 @@ where
             //100Hz or slower
             let keyboard_state = keyboard.state().unwrap();
 
-            let mut led = 0;
-            //todo - spin lock until usb ready to recive, reset timers
-            cortex_m::interrupt::free(|cs| {
-                let mut usb_ref = USB_MANAGER.borrow(cs).borrow_mut();
-                if let Some(usb) = usb_ref.as_mut() {
-                    usb.keyboard_borrow_mut()
-                        .write_keycodes(keyboard_state.keycodes.iter().map(|&k| k as u8))
-                        .ok();
-                    led = usb.keyboard_led();
-                }
-            });
+            usb_keyboard
+                .write_keycodes(keyboard_state.keycodes.iter().map(|&k| k as u8))
+                .ok();
+
+            let leds = usb_keyboard.read_leds().unwrap_or(0);
 
             oled_display
-                .draw_left_display(led.into(), keyboard_state.keycodes, keyboard_state.layer)
+                .draw_left_display(leds.into(), keyboard_state.keycodes, keyboard_state.layer)
                 .ok();
         }
     }
 }
 
-#[allow(non_snake_case)]
-#[interrupt]
-fn USBCTRL_IRQ() {
-    cortex_m::interrupt::free(|cs| {
-        let mut usb_ref = USB_MANAGER.borrow(cs).borrow_mut();
-        if let Some(usb) = usb_ref.as_mut() {
-            usb.service_irq();
-        }
-    });
-    cortex_m::asm::sev();
-}
+// #[allow(non_snake_case)]
+// #[interrupt]
+// fn USBCTRL_IRQ() {
+//     cortex_m::interrupt::free(|cs| {
+//         let mut usb_ref = USB_MANAGER.borrow(cs).borrow_mut();
+//         if let Some(usb) = usb_ref.as_mut() {
+//             usb.service_irq();
+//         }
+//     });
+//     cortex_m::asm::sev();
+// }
 
 #[inline(never)]
 #[panic_handler]
