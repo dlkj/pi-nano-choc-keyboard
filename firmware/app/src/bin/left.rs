@@ -22,6 +22,7 @@ use embedded_text::style::{HeightMode, TextBoxStyleBuilder};
 use embedded_text::TextBox;
 use embedded_time::duration::Extensions;
 use log::{error, info, LevelFilter};
+use nb::block;
 use rp_pico::hal::clocks::{self, ClocksManager};
 use rp_pico::hal::gpio::{bank0::*, DynPin, Function};
 use rp_pico::hal::gpio::{FunctionUart, Pin, I2C};
@@ -39,8 +40,8 @@ use rp_pico::{
 use ssd1306::mode::BufferedGraphicsMode;
 use ssd1306::{prelude::*, size::DisplaySize128x32, I2CDisplayInterface, Ssd1306};
 use usb_device::class_prelude::*;
-use usb_device::prelude::UsbDeviceBuilder;
-use usb_device::prelude::UsbVidPid;
+use usb_device::device::UsbDeviceState;
+use usb_device::prelude::*;
 use usbd_hid_devices::keyboard::HidKeyboard;
 
 type BufferedSsd1306 = Ssd1306<
@@ -469,28 +470,23 @@ fn main() -> ! {
         &mut pac.RESETS,
     ));
 
-    // USB_MANAGER.borrow(cs).replace(Some(UsbManager::new(
-    //     usb_alloc.as_ref().unwrap(),
-    //     //https://pid.codes
-    //     0x0002,
-    // )));
-
     let mut usb_keyboard = usbd_hid_devices::hid::UsbHidClass::new(
         &usb_alloc,
         usbd_hid_devices::keyboard::HidBootKeyboard::default(),
     );
     // Create a USB device with https://pid.code VID and a test PID
-    let mut usb_device = UsbDeviceBuilder::new(&usb_alloc, UsbVidPid(0x1209, 0x02))
+    //https://pid.codes
+    let mut usb_device = UsbDeviceBuilder::new(&usb_alloc, UsbVidPid(0x1209, 0x0004))
         .manufacturer("DLKJ")
-        .product("pi-nano-choc")
+        .product("pichocnano")
         .serial_number("TEST")
-        .device_class(0x03) //HID - from: https://www.usb.org/defined-class-codes
-        // .composite_with_iads()
-        // .supports_remote_wakeup(true)
+        .device_class(3) // HID - from: https://www.usb.org/defined-class-codes
+        .composite_with_iads()
+        .supports_remote_wakeup(true)
         .build();
 
     //Ensure the host knows a restart has occurred
-    usb_device.force_reset().ok();
+    //usb_device.force_reset().ok();
 
     log::set_max_level(LevelFilter::Info);
 
@@ -543,6 +539,10 @@ fn main() -> ! {
 
     info!("Starting");
 
+    // let mut startup_delay = timer.count_down();
+    // startup_delay.start(100.milliseconds());
+    // block!(startup_delay.wait()).unwrap();
+
     let mut keyboard = Keyboard::new(
         SplitMatrix {
             matrix1: DiodePinMatrix::new(rows, cols),
@@ -561,10 +561,32 @@ fn main() -> ! {
 
     let mut leds = 0;
 
-    let mut keyboard_state = None;
+    let mut keyboard_state: Option<KeyboardState<72>> = None;
 
     info!("Running main loop");
     loop {
+        if usb_device.state() != UsbDeviceState::Configured {
+            leds = 0;
+        }
+
+        if usb_device.poll(&mut [&mut usb_keyboard]) {
+            leds = match usb_keyboard.read_leds() {
+                Ok(leds) => leds,
+
+                Err(UsbError::WouldBlock) => leds,
+                Err(_) => 0,
+            };
+
+            if let Some(state) = keyboard_state.as_ref() {
+                if usb_keyboard
+                    .write_keycodes(state.keycodes.iter().map(|&k| k as u8))
+                    .is_ok()
+                {
+                    //keyboard_state = None;
+                }
+            }
+        }
+
         //0.1ms scan the keys and debounce
         if fast_countdown.wait().is_ok() {
             // let (p_a, p_b) = rot_enc.pins_borrow_mut();
@@ -584,34 +606,16 @@ fn main() -> ! {
             //100Hz or slower
             let state = keyboard.state().unwrap();
 
-            oled_display
-                .draw_left_display(
-                    leds.into(),
-                    &state.keycodes,
-                    state.layer,
-                    usb_device.state(),
-                )
-                .ok();
+            // oled_display
+            //     .draw_left_display(
+            //         leds.into(),
+            //         &state.keycodes,
+            //         state.layer,
+            //         usb_device.state(),
+            //     )
+            //     .ok();
 
             keyboard_state = Some(state);
-        }
-
-        if usb_device.poll(&mut [&mut usb_keyboard]) {
-            leds = match usb_keyboard.read_leds() {
-                Ok(leds) => leds,
-
-                Err(UsbError::WouldBlock) => leds,
-                Err(_) => 0,
-            };
-
-            if let Some(state) = keyboard_state.as_ref() {
-                if usb_keyboard
-                    .write_keycodes(state.keycodes.iter().map(|&k| k as u8))
-                    .is_ok()
-                {
-                    keyboard_state = None;
-                }
-            }
         }
     }
 }
