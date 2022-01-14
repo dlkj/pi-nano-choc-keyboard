@@ -3,6 +3,7 @@ use core::cell::RefCell;
 use core::fmt::Write;
 use cortex_m::interrupt::Mutex;
 use display_interface::DisplayError;
+use embedded_graphics::primitives::PrimitiveStyleBuilder;
 use embedded_graphics::primitives::RoundedRectangle;
 use embedded_graphics::{
     image::{Image, ImageRawLE},
@@ -20,6 +21,7 @@ use embedded_text::{
 use rand::prelude::SmallRng;
 use rand::{RngCore, SeedableRng};
 use rp_pico::hal::Timer;
+use usb_device::prelude::UsbDeviceState;
 
 use crate::keyboard;
 
@@ -38,16 +40,15 @@ where
     }
 }
 
-struct ScreensaverState {
-    points: [Point; 32],
-}
-
 pub struct OledDisplay<'a, D> {
     display: &'a Mutex<RefCell<Option<D>>>,
     timer: &'a Timer,
     last_active: u64,
     rng: SmallRng,
-    screensaver_state: ScreensaverState,
+    leds: keyboard::keycode::Leds,
+    usb_state: UsbDeviceState,
+    layer: usize,
+    screen_saver_stars: [Point; 32],
 }
 
 impl<'a, D> OledDisplay<'a, D>
@@ -70,7 +71,10 @@ where
             timer,
             last_active: now,
             rng,
-            screensaver_state: ScreensaverState { points },
+            layer: 0,
+            usb_state: UsbDeviceState::Default,
+            screen_saver_stars: points,
+            leds: keyboard::keycode::Leds::empty(),
         }
     }
 
@@ -178,11 +182,48 @@ where
         Ok(())
     }
 
+    fn draw_usb_indicator(
+        display: &mut D,
+        top_left: Point,
+        usb_state: UsbDeviceState,
+    ) -> Result<(), DisplayError> {
+        let bounding_box = Rectangle::new(top_left, Size::new(32, 4));
+        let shape = RoundedRectangle::with_equal_corners(
+            Rectangle::with_center(bounding_box.center(), Size::new(32, 4)),
+            Size::new(2, 2),
+        );
+
+        match usb_state {
+            UsbDeviceState::Default => {}
+            UsbDeviceState::Addressed => {
+                let inner = PrimitiveStyleBuilder::new()
+                    .fill_color(BinaryColor::On)
+                    .stroke_color(BinaryColor::Off)
+                    .stroke_width(1)
+                    .build();
+
+                shape.into_styled(inner).draw(display)?;
+            }
+            UsbDeviceState::Configured => {
+                let fill = PrimitiveStyle::with_fill(BinaryColor::On);
+
+                shape.into_styled(fill).draw(display)?;
+            }
+            UsbDeviceState::Suspend => {
+                let hollow = PrimitiveStyle::with_stroke(BinaryColor::On, 1);
+
+                shape.into_styled(hollow).draw(display)?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn draw_left_display(
         &mut self,
         leds: keyboard::keycode::Leds,
         keycodes: &[KeyCode],
         layer: usize,
+        usb_state: UsbDeviceState,
     ) -> Result<(), DisplayError> {
         let now = self.timer.get_counter();
 
@@ -193,8 +234,17 @@ where
             )
         });
 
-        if modifier_active || key_active {
+        //Keyboard is active if any key is pressed, layer change, led changes or usb status changes
+        if modifier_active
+            || key_active
+            || leds != self.leds
+            || usb_state != self.usb_state
+            || layer != self.layer
+        {
             self.last_active = now;
+            self.leds = leds;
+            self.usb_state = usb_state;
+            self.layer = layer;
         }
 
         if now - self.last_active > 60_000_000 {
@@ -217,15 +267,18 @@ where
                 }
 
                 //Layer
-                Self::draw_layer_indicator(display, Point::new(0, 13), layer)?;
+                Self::draw_layer_indicator(display, Point::new(0, 17), layer)?;
 
                 //Keycode indicator
                 Self::draw_keycode_indicator(
                     display,
-                    Point::new(0, 112),
+                    Point::new(0, 100),
                     modifier_active,
                     key_active,
                 )?;
+
+                //Usb status
+                Self::draw_usb_indicator(display, Point::new(0, 124), usb_state)?;
 
                 display.flush()
             })
@@ -256,8 +309,7 @@ where
 
     fn draw_screen_saver(&mut self) -> Result<(), DisplayError> {
         let pixels = self
-            .screensaver_state
-            .points
+            .screen_saver_stars
             .iter()
             .map(|&p| Pixel(p / 10, BinaryColor::On));
 
@@ -267,7 +319,7 @@ where
             display.flush()
         })?;
 
-        for p in self.screensaver_state.points.iter_mut() {
+        for p in self.screen_saver_stars.iter_mut() {
             let tmp = *p;
 
             let velocity = (tmp - Point::new(160, 640)) / 20;

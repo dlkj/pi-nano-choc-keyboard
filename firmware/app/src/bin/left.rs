@@ -489,7 +489,7 @@ fn main() -> ! {
         // .supports_remote_wakeup(true)
         .build();
 
-    //Ensure the host knows a restart has occured
+    //Ensure the host knows a restart has occurred
     usb_device.force_reset().ok();
 
     log::set_max_level(LevelFilter::Info);
@@ -585,7 +585,12 @@ fn main() -> ! {
             let state = keyboard.state().unwrap();
 
             oled_display
-                .draw_left_display(leds.into(), &state.keycodes, state.layer)
+                .draw_left_display(
+                    leds.into(),
+                    &state.keycodes,
+                    state.layer,
+                    usb_device.state(),
+                )
                 .ok();
 
             keyboard_state = Some(state);
