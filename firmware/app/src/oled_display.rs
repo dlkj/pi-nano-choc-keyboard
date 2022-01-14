@@ -178,21 +178,20 @@ where
         Ok(())
     }
 
-    pub fn draw_left_display<K: IntoIterator<Item = KeyCode>>(
+    pub fn draw_left_display(
         &mut self,
         leds: keyboard::keycode::Leds,
-        keycodes: K,
+        keycodes: &[KeyCode],
         layer: usize,
     ) -> Result<(), DisplayError> {
         let now = self.timer.get_counter();
 
-        let (modifier_active, key_active) =
-            keycodes.into_iter().fold((false, false), |(am, ak), k| {
-                (
-                    am || k.is_modifier(),
-                    ak || !k.is_modifier() && k >= KeyCode::A,
-                )
-            });
+        let (modifier_active, key_active) = keycodes.iter().fold((false, false), |(am, ak), &k| {
+            (
+                am || k.is_modifier(),
+                ak || !k.is_modifier() && k >= KeyCode::A,
+            )
+        });
 
         if modifier_active || key_active {
             self.last_active = now;

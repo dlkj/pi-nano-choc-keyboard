@@ -461,7 +461,7 @@ fn main() -> ! {
     });
 
     //Init USB
-    let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
+    let usb_alloc = UsbBusAllocator::new(hal::usb::UsbBus::new(
         pac.USBCTRL_REGS,
         pac.USBCTRL_DPRAM,
         clocks.usb_clock,
@@ -470,17 +470,17 @@ fn main() -> ! {
     ));
 
     // USB_MANAGER.borrow(cs).replace(Some(UsbManager::new(
-    //     USB_BUS.as_ref().unwrap(),
+    //     usb_alloc.as_ref().unwrap(),
     //     //https://pid.codes
     //     0x0002,
     // )));
 
     let mut usb_keyboard = usbd_hid_devices::hid::UsbHidClass::new(
-        &usb_bus,
+        &usb_alloc,
         usbd_hid_devices::keyboard::HidBootKeyboard::default(),
     );
     // Create a USB device with https://pid.code VID and a test PID
-    let mut usb_device = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x1209, 0x02))
+    let mut usb_device = UsbDeviceBuilder::new(&usb_alloc, UsbVidPid(0x1209, 0x02))
         .manufacturer("DLKJ")
         .product("pi-nano-choc")
         .serial_number("TEST")
@@ -488,6 +488,9 @@ fn main() -> ! {
         // .composite_with_iads()
         // .supports_remote_wakeup(true)
         .build();
+
+    //Ensure the host knows a restart has occured
+    usb_device.force_reset().ok();
 
     log::set_max_level(LevelFilter::Info);
 
@@ -558,6 +561,8 @@ fn main() -> ! {
 
     let mut leds = 0;
 
+    let mut keyboard_state = None;
+
     info!("Running main loop");
     loop {
         //0.1ms scan the keys and debounce
@@ -570,8 +575,6 @@ fn main() -> ! {
             //rot_enc.update();
 
             keyboard.update().expect("Failed to update keyboard");
-
-            usb_device.poll(&mut [&mut usb_keyboard]);
         }
 
         //10ms
@@ -579,12 +582,16 @@ fn main() -> ! {
             //led_pin.toggle().unwrap();
 
             //100Hz or slower
-            let keyboard_state = keyboard.state().unwrap();
+            let state = keyboard.state().unwrap();
 
-            usb_keyboard
-                .write_keycodes(keyboard_state.keycodes.iter().map(|&k| k as u8))
+            oled_display
+                .draw_left_display(leds.into(), &state.keycodes, state.layer)
                 .ok();
 
+            keyboard_state = Some(state);
+        }
+
+        if usb_device.poll(&mut [&mut usb_keyboard]) {
             leds = match usb_keyboard.read_leds() {
                 Ok(leds) => leds,
 
@@ -592,9 +599,14 @@ fn main() -> ! {
                 Err(_) => 0,
             };
 
-            oled_display
-                .draw_left_display(leds.into(), keyboard_state.keycodes, keyboard_state.layer)
-                .ok();
+            if let Some(state) = keyboard_state.as_ref() {
+                if usb_keyboard
+                    .write_keycodes(state.keycodes.iter().map(|&k| k as u8))
+                    .is_ok()
+                {
+                    keyboard_state = None;
+                }
+            }
         }
     }
 }
