@@ -1,7 +1,5 @@
 use crate::keyboard::keycode::KeyCode;
-use core::cell::RefCell;
 use core::fmt::Write;
-use cortex_m::interrupt::Mutex;
 use display_interface::DisplayError;
 use embedded_graphics::primitives::PrimitiveStyleBuilder;
 use embedded_graphics::primitives::RoundedRectangle;
@@ -41,7 +39,7 @@ where
 }
 
 pub struct OledDisplay<'a, D> {
-    display: &'a Mutex<RefCell<Option<D>>>,
+    display: D,
     timer: &'a Timer,
     last_active: u64,
     rng: SmallRng,
@@ -55,7 +53,7 @@ impl<'a, D> OledDisplay<'a, D>
 where
     D: DrawTarget<Color = BinaryColor, Error = DisplayError> + FlushableDisplay,
 {
-    pub fn new(display: &'a Mutex<RefCell<Option<D>>>, timer: &'a Timer) -> OledDisplay<'a, D> {
+    pub fn new(display: D, timer: &'a Timer) -> OledDisplay<'a, D> {
         let now = timer.get_counter();
 
         let mut rng = SmallRng::seed_from_u64(now);
@@ -78,26 +76,13 @@ where
         }
     }
 
-    fn exclusive<F>(&self, f: F) -> Result<(), DisplayError>
-    where
-        F: FnOnce(&mut D) -> Result<(), DisplayError>,
-    {
-        cortex_m::interrupt::free(|cs| {
-            let mut display_ref = self.display.borrow(cs).borrow_mut();
-            let display = display_ref.as_mut();
-            f(display.unwrap())
-        })
-    }
-
     pub fn draw_image(&mut self, data: &[u8], width: u32) -> Result<(), DisplayError> {
-        self.exclusive(|display| {
-            display.clear(BinaryColor::Off)?;
+        self.display.clear(BinaryColor::Off)?;
 
-            let img: ImageRawLE<BinaryColor> = ImageRawLE::new(data, width);
-            Image::new(&img, Point::new(32, 0)).draw(display)?;
+        let img: ImageRawLE<BinaryColor> = ImageRawLE::new(data, width);
+        Image::new(&img, Point::new(32, 0)).draw(&mut self.display)?;
 
-            display.flush()
-        })
+        self.display.flush()
     }
 
     fn draw_led_indicator(
@@ -250,38 +235,36 @@ where
         if now - self.last_active > 60_000_000 {
             self.draw_screen_saver()
         } else {
-            self.exclusive(|display| {
-                display.clear(BinaryColor::Off)?;
+            self.display.clear(BinaryColor::Off)?;
 
-                //Led indicators
-                if leds.contains(keyboard::keycode::Leds::CAP_LOCK) {
-                    Self::draw_led_indicator(display, Point::new(0, 0), "C")?;
-                }
+            //Led indicators
+            if leds.contains(keyboard::keycode::Leds::CAP_LOCK) {
+                Self::draw_led_indicator(&mut self.display, Point::new(0, 0), "C")?;
+            }
 
-                if leds.contains(keyboard::keycode::Leds::NUM_LOCK) {
-                    Self::draw_led_indicator(display, Point::new(12, 0), "1")?;
-                }
+            if leds.contains(keyboard::keycode::Leds::NUM_LOCK) {
+                Self::draw_led_indicator(&mut self.display, Point::new(12, 0), "1")?;
+            }
 
-                if leds.contains(keyboard::keycode::Leds::SCROLL_LOCK) {
-                    Self::draw_led_indicator(display, Point::new(24, 0), "S")?;
-                }
+            if leds.contains(keyboard::keycode::Leds::SCROLL_LOCK) {
+                Self::draw_led_indicator(&mut self.display, Point::new(24, 0), "S")?;
+            }
 
-                //Layer
-                Self::draw_layer_indicator(display, Point::new(0, 17), layer)?;
+            //Layer
+            Self::draw_layer_indicator(&mut self.display, Point::new(0, 17), layer)?;
 
-                //Keycode indicator
-                Self::draw_keycode_indicator(
-                    display,
-                    Point::new(0, 100),
-                    modifier_active,
-                    key_active,
-                )?;
+            //Keycode indicator
+            Self::draw_keycode_indicator(
+                &mut self.display,
+                Point::new(0, 100),
+                modifier_active,
+                key_active,
+            )?;
 
-                //Usb status
-                Self::draw_usb_indicator(display, Point::new(0, 124), usb_state)?;
+            //Usb status
+            Self::draw_usb_indicator(&mut self.display, Point::new(0, 124), usb_state)?;
 
-                display.flush()
-            })
+            self.display.flush()
         }
     }
 
@@ -313,11 +296,9 @@ where
             .iter()
             .map(|&p| Pixel(p / 10, BinaryColor::On));
 
-        self.exclusive(|display| {
-            display.clear(BinaryColor::Off)?;
-            display.draw_iter(pixels)?;
-            display.flush()
-        })?;
+        self.display.clear(BinaryColor::Off)?;
+        self.display.draw_iter(pixels)?;
+        self.display.flush()?;
 
         for p in self.screen_saver_stars.iter_mut() {
             let tmp = *p;
@@ -343,21 +324,18 @@ where
     }
 
     pub fn draw_text_screen(&mut self, text: &str) -> Result<(), DisplayError> {
-        self.exclusive(|display| {
-            display.clear(BinaryColor::Off)?;
-            let character_style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
-            let textbox_style = TextBoxStyleBuilder::new()
-                .height_mode(HeightMode::FitToText)
-                .alignment(HorizontalAlignment::Left)
-                .build();
-            let bounds = Rectangle::new(Point::zero(), Size::new(32, 0));
-            let text_box =
-                TextBox::with_textbox_style(text, bounds, character_style, textbox_style);
+        self.display.clear(BinaryColor::Off)?;
+        let character_style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
+        let textbox_style = TextBoxStyleBuilder::new()
+            .height_mode(HeightMode::FitToText)
+            .alignment(HorizontalAlignment::Left)
+            .build();
+        let bounds = Rectangle::new(Point::zero(), Size::new(32, 0));
+        let text_box = TextBox::with_textbox_style(text, bounds, character_style, textbox_style);
 
-            text_box.draw(display)?;
-            display.flush()?;
+        text_box.draw(&mut self.display)?;
+        self.display.flush()?;
 
-            Ok(())
-        })
+        Ok(())
     }
 }

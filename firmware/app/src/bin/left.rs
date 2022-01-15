@@ -4,7 +4,10 @@
 use app::keyboard::keycode::*;
 use app::keyboard::*;
 use app::oled_display::OledDisplay;
+use core::borrow::BorrowMut;
+use core::cell::Cell;
 use core::cell::RefCell;
+use core::cell::UnsafeCell;
 use core::fmt::Write;
 use core::panic::PanicInfo;
 use core::sync::atomic::{self, Ordering};
@@ -30,7 +33,7 @@ use rp_pico::hal::uart::{self, UartPeripheral};
 use rp_pico::hal::{self, Clock};
 use rp_pico::{
     hal::{
-        pac::{self},
+        pac::{self, interrupt},
         sio::Sio,
         timer::Timer,
         watchdog::Watchdog,
@@ -39,376 +42,31 @@ use rp_pico::{
 };
 use ssd1306::mode::BufferedGraphicsMode;
 use ssd1306::{prelude::*, size::DisplaySize128x32, I2CDisplayInterface, Ssd1306};
+use usb_device::class::UsbClass;
 use usb_device::class_prelude::*;
 use usb_device::device::UsbDeviceState;
 use usb_device::prelude::*;
+use usbd_hid_devices::hid::UsbHidClass;
 use usbd_hid_devices::keyboard::HidKeyboard;
 
-type BufferedSsd1306 = Ssd1306<
-    I2CInterface<hal::I2C<pac::I2C1, (Pin<Gpio14, Function<I2C>>, Pin<Gpio15, Function<I2C>>)>>,
-    DisplaySize128x32,
-    BufferedGraphicsMode<DisplaySize128x32>,
->;
+// TODO:
+// * Panic handler to screen in a less horrible way - Ram panic then show on boot
+// * Serial logging
+// * Heart beat from left to right for screen saver control
+// * Tidy and refactor - move keycode out to hid library
 
-static OLED_DISPLAY: Mutex<RefCell<Option<BufferedSsd1306>>> = Mutex::new(RefCell::new(None));
+static USB: Mutex<
+    Cell<
+        Option<(
+            UsbDevice<'static, hal::usb::UsbBus>,
+            UsbHidClass<'static, hal::usb::UsbBus, usbd_hid_devices::keyboard::HidBootKeyboard>,
+        )>,
+    >,
+> = Mutex::new(Cell::new(None));
 
-const BASE_MAP: [KeyAction; 72] = [
-    //row 0
-    KeyAction::Key {
-        code: KeyCode::Escape,
-    },
-    KeyAction::Key { code: KeyCode::Kb1 },
-    KeyAction::Key { code: KeyCode::Kb2 },
-    KeyAction::Key { code: KeyCode::Kb3 },
-    KeyAction::Key { code: KeyCode::Kb4 },
-    KeyAction::Key { code: KeyCode::Kb5 },
-    //row 1
-    KeyAction::Key { code: KeyCode::Tab },
-    KeyAction::Key { code: KeyCode::Q },
-    KeyAction::Key { code: KeyCode::W },
-    KeyAction::Key { code: KeyCode::E },
-    KeyAction::Key { code: KeyCode::R },
-    KeyAction::Key { code: KeyCode::T },
-    //row 2
-    KeyAction::Key {
-        code: KeyCode::BackslashISO,
-    },
-    KeyAction::Key { code: KeyCode::A },
-    KeyAction::Key { code: KeyCode::S },
-    KeyAction::Key { code: KeyCode::D },
-    KeyAction::Key { code: KeyCode::F },
-    KeyAction::Key { code: KeyCode::G },
-    //row 3
-    KeyAction::Key {
-        code: KeyCode::LeftShift,
-    },
-    KeyAction::Key { code: KeyCode::Z },
-    KeyAction::Key { code: KeyCode::X },
-    KeyAction::Key { code: KeyCode::C },
-    KeyAction::Key { code: KeyCode::V },
-    KeyAction::Key { code: KeyCode::B },
-    //row 4
-    KeyAction::Key {
-        code: KeyCode::LeftControl,
-    },
-    KeyAction::Key {
-        code: KeyCode::LeftGUI,
-    },
-    KeyAction::Key {
-        code: KeyCode::Grave,
-    },
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::Key {
-        code: KeyCode::LeftBracket,
-    },
-    //row 5
-    KeyAction::Key {
-        code: KeyCode::None,
-    },
-    KeyAction::Key {
-        code: KeyCode::LeftAlt,
-    },
-    KeyAction::Function {
-        function: KeyFunction::Hyper,
-    },
-    KeyAction::Key {
-        code: KeyCode::Spacebar,
-    },
-    KeyAction::Key {
-        code: KeyCode::Spacebar,
-    },
-    KeyAction::Layer { n: 1 },
-    //right hand
-
-    //row 0
-    KeyAction::Key { code: KeyCode::Kb6 },
-    KeyAction::Key { code: KeyCode::Kb7 },
-    KeyAction::Key { code: KeyCode::Kb8 },
-    KeyAction::Key { code: KeyCode::Kb9 },
-    KeyAction::Key { code: KeyCode::Kb0 },
-    KeyAction::Key {
-        code: KeyCode::Minus,
-    },
-    //row 1
-    KeyAction::Key { code: KeyCode::Y },
-    KeyAction::Key { code: KeyCode::U },
-    KeyAction::Key { code: KeyCode::I },
-    KeyAction::Key { code: KeyCode::O },
-    KeyAction::Key { code: KeyCode::P },
-    KeyAction::Key {
-        code: KeyCode::Equals,
-    },
-    //row 2
-    KeyAction::Key { code: KeyCode::H },
-    KeyAction::Key { code: KeyCode::J },
-    KeyAction::Key { code: KeyCode::K },
-    KeyAction::Key { code: KeyCode::L },
-    KeyAction::Key {
-        code: KeyCode::Semicolon,
-    },
-    KeyAction::Key {
-        code: KeyCode::Apostrophy,
-    },
-    //row 3
-    KeyAction::Key { code: KeyCode::N },
-    KeyAction::Key { code: KeyCode::M },
-    KeyAction::Key {
-        code: KeyCode::Comma,
-    },
-    KeyAction::Key { code: KeyCode::Dot },
-    KeyAction::Key {
-        code: KeyCode::ForwardSlash,
-    },
-    KeyAction::Key {
-        code: KeyCode::RightShift,
-    },
-    //row 4
-    KeyAction::Key {
-        code: KeyCode::RightBracket,
-    },
-    KeyAction::None,
-    KeyAction::Key {
-        code: KeyCode::Delete,
-    },
-    KeyAction::Key {
-        code: KeyCode::Hash,
-    },
-    KeyAction::Key {
-        code: KeyCode::Application,
-    },
-    KeyAction::Key {
-        code: KeyCode::RightControl,
-    },
-    //row 5
-    KeyAction::Layer { n: 2 },
-    KeyAction::Key {
-        code: KeyCode::Enter,
-    },
-    KeyAction::Key {
-        code: KeyCode::Backspace,
-    },
-    KeyAction::Function {
-        function: KeyFunction::Meh,
-    },
-    KeyAction::Key {
-        code: KeyCode::RightAlt,
-    },
-    KeyAction::Key {
-        code: KeyCode::None,
-    },
-];
-const UPPER_MAP: [KeyAction; 72] = [
-    //row 0
-    KeyAction::FallThrough,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    //row 1
-    KeyAction::FallThrough,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    //row 2
-    KeyAction::FallThrough,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    //row 3
-    KeyAction::FallThrough,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    //row 4
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    //row 5
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    //right hand
-    //row 0
-    KeyAction::None,
-    KeyAction::Key {
-        code: KeyCode::KpNumLock,
-    },
-    KeyAction::Key {
-        code: KeyCode::KpBackslash,
-    },
-    KeyAction::Key {
-        code: KeyCode::KpAsterisk,
-    },
-    KeyAction::Key {
-        code: KeyCode::KpMinus,
-    },
-    KeyAction::Key {
-        code: KeyCode::None,
-    },
-    //row 1
-    KeyAction::None,
-    KeyAction::Key { code: KeyCode::Kp7 },
-    KeyAction::Key { code: KeyCode::Kp8 },
-    KeyAction::Key { code: KeyCode::Kp9 },
-    KeyAction::Key {
-        code: KeyCode::KpPlus,
-    },
-    KeyAction::Key {
-        code: KeyCode::None,
-    },
-    //row 2
-    KeyAction::None,
-    KeyAction::Key { code: KeyCode::Kp4 },
-    KeyAction::Key { code: KeyCode::Kp5 },
-    KeyAction::Key { code: KeyCode::Kp6 },
-    KeyAction::Key {
-        code: KeyCode::KpEnter,
-    },
-    KeyAction::Key {
-        code: KeyCode::None,
-    },
-    //row 3
-    KeyAction::None,
-    KeyAction::Key { code: KeyCode::Kp1 },
-    KeyAction::Key { code: KeyCode::Kp2 },
-    KeyAction::Key { code: KeyCode::Kp3 },
-    KeyAction::None,
-    KeyAction::FallThrough,
-    //row 4
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::Key { code: KeyCode::Kp0 },
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    //row 5
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::Key { code: KeyCode::Dot },
-    KeyAction::FallThrough,
-];
-
-const LOWER_MAP: [KeyAction; 72] = [
-    //row 0
-    KeyAction::FallThrough,
-    KeyAction::Key { code: KeyCode::F1 },
-    KeyAction::Key { code: KeyCode::F2 },
-    KeyAction::Key { code: KeyCode::F3 },
-    KeyAction::Key { code: KeyCode::F4 },
-    KeyAction::Key { code: KeyCode::F5 },
-    //row 1
-    KeyAction::FallThrough,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    //row 2
-    KeyAction::FallThrough,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    //row 3
-    KeyAction::FallThrough,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    KeyAction::None,
-    //row 4
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    //row 5
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    //right hand
-    //row 0
-    KeyAction::Key { code: KeyCode::F6 },
-    KeyAction::Key { code: KeyCode::F7 },
-    KeyAction::Key { code: KeyCode::F8 },
-    KeyAction::Key { code: KeyCode::F9 },
-    KeyAction::Key { code: KeyCode::F10 },
-    KeyAction::Key { code: KeyCode::F11 },
-    //row 1
-    KeyAction::None,
-    KeyAction::Key {
-        code: KeyCode::PageUp,
-    },
-    KeyAction::Key {
-        code: KeyCode::UpArrow,
-    },
-    KeyAction::Key {
-        code: KeyCode::PageDown,
-    },
-    KeyAction::None,
-    KeyAction::Key { code: KeyCode::F12 },
-    //row 2
-    KeyAction::None,
-    KeyAction::Key {
-        code: KeyCode::LeftArrow,
-    },
-    KeyAction::Key {
-        code: KeyCode::DownArrow,
-    },
-    KeyAction::Key {
-        code: KeyCode::RightArrow,
-    },
-    KeyAction::None,
-    KeyAction::Key {
-        code: KeyCode::Pause,
-    },
-    //row 3
-    KeyAction::None,
-    KeyAction::Key {
-        code: KeyCode::Home,
-    },
-    KeyAction::None,
-    KeyAction::Key { code: KeyCode::End },
-    KeyAction::None,
-    KeyAction::FallThrough,
-    //row 4
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    //row 5
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-    KeyAction::FallThrough,
-];
-
-const KEY_MAP: [[KeyAction; 72]; 3] = [BASE_MAP, LOWER_MAP, UPPER_MAP];
+static KEYBOARD_STATUS: Mutex<Cell<(Leds, UsbDeviceState)>> =
+    Mutex::new(Cell::new((Leds::empty(), UsbDeviceState::Default)));
+static KEYBOARD_STATE: Mutex<Cell<Option<KeyboardState<72>>>> = Mutex::new(Cell::new(None));
 
 #[entry]
 fn main() -> ! {
@@ -457,26 +115,29 @@ fn main() -> ! {
     display.init().unwrap();
     display.flush().unwrap();
 
-    cortex_m::interrupt::free(|cs| {
-        OLED_DISPLAY.borrow(cs).replace(Some(display));
-    });
-
     //Init USB
-    let usb_alloc = UsbBusAllocator::new(hal::usb::UsbBus::new(
+    static mut USB_ALLOC: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
+
+    let usb_bus = UsbBusAllocator::new(hal::usb::UsbBus::new(
         pac.USBCTRL_REGS,
         pac.USBCTRL_DPRAM,
         clocks.usb_clock,
         true,
         &mut pac.RESETS,
     ));
+    unsafe {
+        USB_ALLOC = Some(usb_bus);
+    }
 
-    let mut usb_keyboard = usbd_hid_devices::hid::UsbHidClass::new(
+    let usb_alloc = unsafe { USB_ALLOC.as_ref().unwrap() };
+
+    let usb_keyboard = usbd_hid_devices::hid::UsbHidClass::new(
         &usb_alloc,
         usbd_hid_devices::keyboard::HidBootKeyboard::default(),
     );
     // Create a USB device with https://pid.code VID and a test PID
     //https://pid.codes
-    let mut usb_device = UsbDeviceBuilder::new(&usb_alloc, UsbVidPid(0x1209, 0x0004))
+    let usb_device = UsbDeviceBuilder::new(&usb_alloc, UsbVidPid(0x1209, 0x0004))
         .manufacturer("DLKJ")
         .product("pichocnano")
         .serial_number("TEST")
@@ -485,8 +146,9 @@ fn main() -> ! {
         .supports_remote_wakeup(true)
         .build();
 
-    //Ensure the host knows a restart has occurred
-    //usb_device.force_reset().ok();
+    cortex_m::interrupt::free(|cs| {
+        USB.borrow(cs).replace(Some((usb_device, usb_keyboard)));
+    });
 
     log::set_max_level(LevelFilter::Info);
 
@@ -532,23 +194,24 @@ fn main() -> ! {
     let _tx_pin = pins.gpio12.into_mode::<FunctionUart>();
     let _rx_pin = pins.gpio13.into_mode::<FunctionUart>();
 
-    let mut oled_display = OledDisplay::new(&OLED_DISPLAY, &timer);
+    let mut oled_display = OledDisplay::new(display, &timer);
 
     // Splash screen
     oled_display.draw_text_screen("Starting...").unwrap();
 
     info!("Starting");
 
-    // let mut startup_delay = timer.count_down();
-    // startup_delay.start(100.milliseconds());
-    // block!(startup_delay.wait()).unwrap();
+    // Enable the USB interrupt
+    unsafe {
+        pac::NVIC::unmask(hal::pac::Interrupt::USBCTRL_IRQ);
+    };
 
     let mut keyboard = Keyboard::new(
         SplitMatrix {
             matrix1: DiodePinMatrix::new(rows, cols),
             matrix2: UartMatrix::new(uart),
         },
-        LayerdKeyboardLayout::new(KEY_MAP),
+        LayerdKeyboardLayout::new(app::key_map::KEY_MAP),
     );
 
     let mut fast_countdown = timer.count_down();
@@ -557,36 +220,8 @@ fn main() -> ! {
     let mut slow_countdown = timer.count_down();
     slow_countdown.start(20.milliseconds());
 
-    //let mut led_pin = pins.led.into_readable_output();
-
-    let mut leds = 0;
-
-    let mut keyboard_state: Option<KeyboardState<72>> = None;
-
     info!("Running main loop");
     loop {
-        if usb_device.state() != UsbDeviceState::Configured {
-            leds = 0;
-        }
-
-        if usb_device.poll(&mut [&mut usb_keyboard]) {
-            leds = match usb_keyboard.read_leds() {
-                Ok(leds) => leds,
-
-                Err(UsbError::WouldBlock) => leds,
-                Err(_) => 0,
-            };
-
-            if let Some(state) = keyboard_state.as_ref() {
-                if usb_keyboard
-                    .write_keycodes(state.keycodes.iter().map(|&k| k as u8))
-                    .is_ok()
-                {
-                    //keyboard_state = None;
-                }
-            }
-        }
-
         //0.1ms scan the keys and debounce
         if fast_countdown.wait().is_ok() {
             // let (p_a, p_b) = rot_enc.pins_borrow_mut();
@@ -605,19 +240,72 @@ fn main() -> ! {
 
             //100Hz or slower
             let state = keyboard.state().unwrap();
+            let keycodes = state.keycodes.clone();
+            let layer = state.layer;
 
-            // oled_display
-            //     .draw_left_display(
-            //         leds.into(),
-            //         &state.keycodes,
-            //         state.layer,
-            //         usb_device.state(),
-            //     )
-            //     .ok();
+            let (leds, usb_state) =
+                cortex_m::interrupt::free(|cs| KEYBOARD_STATUS.borrow(cs).get());
 
-            keyboard_state = Some(state);
+            //update keyboard state
+            cortex_m::interrupt::free(|cs| KEYBOARD_STATE.borrow(cs).replace(Some(state)));
+
+            oled_display
+                .draw_left_display(leds, &keycodes, layer, usb_state)
+                .ok();
         }
     }
+}
+
+#[allow(non_snake_case)]
+#[interrupt]
+fn USBCTRL_IRQ() {
+    static mut USB_DEVICES: Option<(
+        UsbDevice<'static, hal::usb::UsbBus>,
+        UsbHidClass<'static, hal::usb::UsbBus, usbd_hid_devices::keyboard::HidBootKeyboard>,
+    )> = None;
+
+    if USB_DEVICES.is_none() {
+        cortex_m::interrupt::free(|cs| {
+            *USB_DEVICES = USB.borrow(cs).replace(None);
+        });
+    }
+
+    if let Some((ref mut usb_device, ref mut usb_keyboard)) = USB_DEVICES.as_mut() {
+        let mut leds = None;
+        if usb_device.state() != UsbDeviceState::Configured {
+            leds = Some(Leds::empty());
+        }
+
+        if usb_device.poll(&mut [usb_keyboard]) {
+            leds = match usb_keyboard.read_leds() {
+                Ok(leds) => Some(leds.into()),
+
+                Err(UsbError::WouldBlock) => None,
+                Err(_) => Some(Leds::empty()),
+            };
+
+            cortex_m::interrupt::free(|cs| {
+                if let Some(state) = KEYBOARD_STATE.borrow(cs).replace(None) {
+                    if usb_keyboard
+                        .write_keycodes(state.keycodes.iter().map(|&k| k as u8))
+                        .is_err()
+                    {
+                        KEYBOARD_STATE.borrow(cs).replace(Some(state));
+                    }
+                }
+            });
+        }
+
+        cortex_m::interrupt::free(|cs| {
+            //update leds
+            if let Some(new_leds) = leds {
+                KEYBOARD_STATUS
+                    .borrow(cs)
+                    .replace((new_leds, usb_device.state()));
+            }
+        });
+    }
+    cortex_m::asm::sev();
 }
 
 #[inline(never)]
@@ -627,30 +315,30 @@ fn panic(info: &PanicInfo) -> ! {
 
     let mut output = arrayvec::ArrayString::<1024>::new();
     if write!(&mut output, "{}", info).ok().is_some() {
-        cortex_m::interrupt::free(|cs| {
-            let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
-            if let Some(display) = display_ref.as_mut() {
-                display.clear();
-                let character_style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
-                let textbox_style = TextBoxStyleBuilder::new()
-                    .height_mode(HeightMode::FitToText)
-                    .alignment(HorizontalAlignment::Left)
-                    .build();
-                let bounds = Rectangle::new(Point::zero(), Size::new(32, 0));
-                let text_box = TextBox::with_textbox_style(
-                    output.as_str(),
-                    bounds,
-                    character_style,
-                    textbox_style,
-                );
+        // cortex_m::interrupt::free(|cs| {
+        //     let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
+        //     if let Some(display) = display_ref.as_mut() {
+        //         display.clear();
+        //         let character_style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
+        //         let textbox_style = TextBoxStyleBuilder::new()
+        //             .height_mode(HeightMode::FitToText)
+        //             .alignment(HorizontalAlignment::Left)
+        //             .build();
+        //         let bounds = Rectangle::new(Point::zero(), Size::new(32, 0));
+        //         let text_box = TextBox::with_textbox_style(
+        //             output.as_str(),
+        //             bounds,
+        //             character_style,
+        //             textbox_style,
+        //         );
 
-                text_box.draw(display)?;
-                display.flush()
-            } else {
-                Ok(())
-            }
-        })
-        .ok();
+        //         text_box.draw(display)?;
+        //         display.flush()
+        //     } else {
+        //         Ok(())
+        //     }
+        // })
+        // .ok();
     }
 
     loop {

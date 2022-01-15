@@ -5,7 +5,6 @@
 
 use app::keyboard::*;
 use app::oled_display::OledDisplay;
-use app::usb::UsbManager;
 use core::cell::RefCell;
 use core::fmt::Write;
 use core::panic::PanicInfo;
@@ -19,6 +18,7 @@ use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 use embedded_hal::digital::v2::OutputPin;
+use embedded_hal::prelude::_embedded_hal_serial_Write;
 use embedded_text::alignment::HorizontalAlignment;
 use embedded_text::style::{HeightMode, TextBoxStyleBuilder};
 use embedded_text::TextBox;
@@ -43,15 +43,13 @@ use ssd1306::mode::BufferedGraphicsMode;
 use ssd1306::{prelude::*, size::DisplaySize128x32, I2CDisplayInterface, Ssd1306};
 use usb_device::class_prelude::*;
 
-type BufferedSsd1306 = Ssd1306<
-    I2CInterface<hal::I2C<pac::I2C0, (Pin<Gpio16, Function<I2C>>, Pin<Gpio17, Function<I2C>>)>>,
-    DisplaySize128x32,
-    BufferedGraphicsMode<DisplaySize128x32>,
->;
+// type BufferedSsd1306 = Ssd1306<
+//     I2CInterface<hal::I2C<pac::I2C0, (Pin<Gpio16, Function<I2C>>, Pin<Gpio17, Function<I2C>>)>>,
+//     DisplaySize128x32,
+//     BufferedGraphicsMode<DisplaySize128x32>,
+// >;
 
-static USB_MANAGER: Mutex<RefCell<Option<UsbManager<hal::usb::UsbBus>>>> =
-    Mutex::new(RefCell::new(None));
-static OLED_DISPLAY: Mutex<RefCell<Option<BufferedSsd1306>>> = Mutex::new(RefCell::new(None));
+// static OLED_DISPLAY: Mutex<RefCell<Option<BufferedSsd1306>>> = Mutex::new(RefCell::new(None));
 
 #[entry]
 fn main() -> ! {
@@ -81,48 +79,25 @@ fn main() -> ! {
 
     let timer = Timer::new(pac.TIMER, &mut pac.RESETS);
 
-    cortex_m::interrupt::free(|cs| {
-        //Init display
-        let scl_pin = pins.gpio17.into_mode::<rp_pico::hal::gpio::FunctionI2C>();
-        let sda_pin = pins.gpio16.into_mode::<rp_pico::hal::gpio::FunctionI2C>();
+    //Init display
+    let scl_pin = pins.gpio17.into_mode::<rp_pico::hal::gpio::FunctionI2C>();
+    let sda_pin = pins.gpio16.into_mode::<rp_pico::hal::gpio::FunctionI2C>();
 
-        let i2c = rp_pico::hal::i2c::I2C::new_controller(
-            pac.I2C0,
-            sda_pin,
-            scl_pin,
-            embedded_time::rate::Extensions::kHz(400),
-            &mut pac.RESETS,
-            clocks.peripheral_clock.freq(),
-        );
+    let i2c = rp_pico::hal::i2c::I2C::new_controller(
+        pac.I2C0,
+        sda_pin,
+        scl_pin,
+        embedded_time::rate::Extensions::kHz(400),
+        &mut pac.RESETS,
+        clocks.peripheral_clock.freq(),
+    );
 
-        let interface = I2CDisplayInterface::new(i2c);
-        let mut display = Ssd1306::new(interface, DisplaySize128x32, DisplayRotation::Rotate90)
-            .into_buffered_graphics_mode();
-        display.init().unwrap();
-        display.flush().unwrap();
-
-        OLED_DISPLAY.borrow(cs).replace(Some(display));
-
-        //Init USB
-        static mut USB_BUS: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
-
-        // Note (safety): interupts not yet enabled
-        unsafe {
-            USB_BUS = Some(UsbBusAllocator::new(hal::usb::UsbBus::new(
-                pac.USBCTRL_REGS,
-                pac.USBCTRL_DPRAM,
-                clocks.usb_clock,
-                true,
-                &mut pac.RESETS,
-            )));
-
-            USB_MANAGER.borrow(cs).replace(Some(UsbManager::new(
-                USB_BUS.as_ref().unwrap(),
-                //https://pid.codes
-                0x0003,
-            )));
-        }
-    });
+    let interface = I2CDisplayInterface::new(i2c);
+    let mut display = Ssd1306::new(interface, DisplaySize128x32, DisplayRotation::Rotate90)
+        .into_buffered_graphics_mode();
+    display.init().unwrap();
+    display.flush().unwrap();
+    let mut oled_display = app::oled_display::OledDisplay::new(display, &timer);
 
     log::set_max_level(LevelFilter::Info);
 
@@ -158,7 +133,7 @@ fn main() -> ! {
         p.set_low().unwrap();
     }
 
-    let uart = UartPeripheral::<_, _>::new(pac.UART0, &mut pac.RESETS)
+    let mut uart = UartPeripheral::<_, _>::new(pac.UART0, &mut pac.RESETS)
         .enable(
             uart::common_configs::_19200_8_N_1,
             clocks.peripheral_clock.freq(),
@@ -167,16 +142,6 @@ fn main() -> ! {
 
     let _tx_pin = pins.gpio12.into_mode::<FunctionUart>();
     let _rx_pin = pins.gpio13.into_mode::<FunctionUart>();
-
-    start(timer, uart, rows, cols);
-}
-
-fn start<U>(timer: Timer, mut uart: U, rows: [DynPin; 6], cols: [DynPin; 6]) -> !
-where
-    U: embedded_hal::serial::Write<u8>,
-    U::Error: core::fmt::Debug,
-{
-    let mut oled_display = OledDisplay::new(&OLED_DISPLAY, &timer);
 
     // Splash screen
     oled_display.draw_text_screen("Starting...").unwrap();
@@ -228,17 +193,6 @@ where
     }
 }
 
-#[allow(non_snake_case)]
-#[interrupt]
-fn USBCTRL_IRQ() {
-    cortex_m::interrupt::free(|cs| {
-        if let Some(usb) = USB_MANAGER.borrow(cs).borrow_mut().as_mut() {
-            usb.service_irq();
-        }
-    });
-    cortex_m::asm::sev();
-}
-
 #[inline(never)]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -246,30 +200,29 @@ fn panic(info: &PanicInfo) -> ! {
 
     let mut output = arrayvec::ArrayString::<1024>::new();
     if write!(&mut output, "{}", info).ok().is_some() {
-        cortex_m::interrupt::free(|cs| {
-            let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
-            if let Some(display) = display_ref.as_mut() {
-                display.clear();
-                let character_style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
-                let textbox_style = TextBoxStyleBuilder::new()
-                    .height_mode(HeightMode::FitToText)
-                    .alignment(HorizontalAlignment::Left)
-                    .build();
-                let bounds = Rectangle::new(Point::zero(), Size::new(32, 0));
-                let text_box = TextBox::with_textbox_style(
-                    output.as_str(),
-                    bounds,
-                    character_style,
-                    textbox_style,
-                );
+        // cortex_m::interrupt::free(|cs| {
+        //     let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
+        //     if let Some(display) = display_ref.as_mut() {
+        //         display.clear();
+        //         let character_style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
+        //         let textbox_style = TextBoxStyleBuilder::new()
+        //             .height_mode(HeightMode::FitToText)
+        //             .alignment(HorizontalAlignment::Left)
+        //             .build();
+        //         let bounds = Rectangle::new(Point::zero(), Size::new(32, 0));
+        //         let text_box = TextBox::with_textbox_style(
+        //             output.as_str(),
+        //             bounds,
+        //             character_style,
+        //             textbox_style,
+        //         );
 
-                text_box.draw(display)?;
-                display.flush()
-            } else {
-                Ok(())
-            }
-        })
-        .ok();
+        //         text_box.draw(display)?;
+        //         display.flush()
+        //     } else {
+        //         Ok(())
+        //     }
+        // .ok();
     }
 
     loop {
