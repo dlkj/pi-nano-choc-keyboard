@@ -1,55 +1,30 @@
 #![no_std]
 #![no_main]
 
-//USB serial console (minicom -b 115200 -o -D /dev/ttyACM0)
-
 use app::keyboard::*;
-use app::oled_display::OledDisplay;
-use core::cell::RefCell;
-use core::fmt::Write;
-use core::panic::PanicInfo;
-use core::sync::atomic::{self, Ordering};
-use cortex_m::interrupt::Mutex;
 use cortex_m::prelude::_embedded_hal_timer_CountDown;
 use cortex_m_rt::entry;
-use embedded_graphics::mono_font::iso_8859_1::FONT_4X6;
-use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::pixelcolor::BinaryColor;
-use embedded_graphics::prelude::*;
-use embedded_graphics::primitives::Rectangle;
 use embedded_hal::digital::v2::OutputPin;
 use embedded_hal::prelude::_embedded_hal_serial_Write;
-use embedded_text::alignment::HorizontalAlignment;
-use embedded_text::style::{HeightMode, TextBoxStyleBuilder};
-use embedded_text::TextBox;
 use embedded_time::duration::Extensions;
-use log::{error, info, LevelFilter};
+use log::{info, LevelFilter};
 use nb::block;
+use panic_persist as _;
 use rp_pico::hal::clocks::{self, ClocksManager};
-use rp_pico::hal::gpio::{FunctionUart, I2C};
+use rp_pico::hal::gpio::FunctionUart;
 use rp_pico::hal::uart::{self, UartPeripheral};
 use rp_pico::hal::{self, Clock};
 use rp_pico::{
     hal::{
-        gpio::{bank0::*, DynPin, Function, Pin},
-        pac::{self, interrupt},
+        gpio::DynPin,
+        pac::{self},
         sio::Sio,
         timer::Timer,
         watchdog::Watchdog,
     },
     Pins,
 };
-use ssd1306::mode::BufferedGraphicsMode;
 use ssd1306::{prelude::*, size::DisplaySize128x32, I2CDisplayInterface, Ssd1306};
-use usb_device::class_prelude::*;
-
-// type BufferedSsd1306 = Ssd1306<
-//     I2CInterface<hal::I2C<pac::I2C0, (Pin<Gpio16, Function<I2C>>, Pin<Gpio17, Function<I2C>>)>>,
-//     DisplaySize128x32,
-//     BufferedGraphicsMode<DisplaySize128x32>,
-// >;
-
-// static OLED_DISPLAY: Mutex<RefCell<Option<BufferedSsd1306>>> = Mutex::new(RefCell::new(None));
 
 #[entry]
 fn main() -> ! {
@@ -98,6 +73,13 @@ fn main() -> ! {
     display.init().unwrap();
     display.flush().unwrap();
     let mut oled_display = app::oled_display::OledDisplay::new(display, &timer);
+
+    if let Some(msg) = panic_persist::get_panic_message_utf8() {
+        oled_display.draw_text_screen(msg).ok();
+        loop {
+            cortex_m::asm::nop();
+        }
+    }
 
     log::set_max_level(LevelFilter::Info);
 
@@ -190,42 +172,5 @@ fn main() -> ! {
 
             oled_display.draw_right_display(&pressed_keys[..]).ok();
         }
-    }
-}
-
-#[inline(never)]
-#[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
-    error!("{}", info);
-
-    let mut output = arrayvec::ArrayString::<1024>::new();
-    if write!(&mut output, "{}", info).ok().is_some() {
-        // cortex_m::interrupt::free(|cs| {
-        //     let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
-        //     if let Some(display) = display_ref.as_mut() {
-        //         display.clear();
-        //         let character_style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
-        //         let textbox_style = TextBoxStyleBuilder::new()
-        //             .height_mode(HeightMode::FitToText)
-        //             .alignment(HorizontalAlignment::Left)
-        //             .build();
-        //         let bounds = Rectangle::new(Point::zero(), Size::new(32, 0));
-        //         let text_box = TextBox::with_textbox_style(
-        //             output.as_str(),
-        //             bounds,
-        //             character_style,
-        //             textbox_style,
-        //         );
-
-        //         text_box.draw(display)?;
-        //         display.flush()
-        //     } else {
-        //         Ok(())
-        //     }
-        // .ok();
-    }
-
-    loop {
-        atomic::compiler_fence(Ordering::SeqCst);
     }
 }

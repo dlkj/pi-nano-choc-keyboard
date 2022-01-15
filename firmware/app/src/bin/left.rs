@@ -4,31 +4,17 @@
 use app::keyboard::keycode::*;
 use app::keyboard::*;
 use app::oled_display::OledDisplay;
-use core::borrow::BorrowMut;
 use core::cell::Cell;
-use core::cell::RefCell;
-use core::cell::UnsafeCell;
-use core::fmt::Write;
-use core::panic::PanicInfo;
-use core::sync::atomic::{self, Ordering};
 use cortex_m::interrupt::Mutex;
 use cortex_m::prelude::*;
 use cortex_m_rt::entry;
-use embedded_graphics::mono_font::iso_8859_1::FONT_4X6;
-use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::pixelcolor::BinaryColor;
-use embedded_graphics::prelude::*;
-use embedded_graphics::primitives::Rectangle;
 use embedded_hal::digital::v2::OutputPin;
-use embedded_text::alignment::HorizontalAlignment;
-use embedded_text::style::{HeightMode, TextBoxStyleBuilder};
-use embedded_text::TextBox;
 use embedded_time::duration::Extensions;
-use log::{error, info, LevelFilter};
-use nb::block;
+use log::{info, LevelFilter};
+use panic_persist as _;
 use rp_pico::hal::clocks::{self, ClocksManager};
-use rp_pico::hal::gpio::{bank0::*, DynPin, Function};
-use rp_pico::hal::gpio::{FunctionUart, Pin, I2C};
+use rp_pico::hal::gpio::DynPin;
+use rp_pico::hal::gpio::FunctionUart;
 use rp_pico::hal::uart::{self, UartPeripheral};
 use rp_pico::hal::{self, Clock};
 use rp_pico::{
@@ -40,9 +26,7 @@ use rp_pico::{
     },
     Pins,
 };
-use ssd1306::mode::BufferedGraphicsMode;
 use ssd1306::{prelude::*, size::DisplaySize128x32, I2CDisplayInterface, Ssd1306};
-use usb_device::class::UsbClass;
 use usb_device::class_prelude::*;
 use usb_device::device::UsbDeviceState;
 use usb_device::prelude::*;
@@ -50,19 +34,19 @@ use usbd_hid_devices::hid::UsbHidClass;
 use usbd_hid_devices::keyboard::HidKeyboard;
 
 // TODO:
-// * Panic handler to screen in a less horrible way - Ram panic then show on boot
 // * Serial logging
 // * Heart beat from left to right for screen saver control
 // * Tidy and refactor - move keycode out to hid library
+// * Pin args to &dyn InputPin and OutputPin
+// * Rotary encoders
+// * Consumer control support
 
-static USB: Mutex<
-    Cell<
-        Option<(
-            UsbDevice<'static, hal::usb::UsbBus>,
-            UsbHidClass<'static, hal::usb::UsbBus, usbd_hid_devices::keyboard::HidBootKeyboard>,
-        )>,
-    >,
-> = Mutex::new(Cell::new(None));
+type UsbDevices = (
+    UsbDevice<'static, hal::usb::UsbBus>,
+    UsbHidClass<'static, hal::usb::UsbBus, usbd_hid_devices::keyboard::HidBootKeyboard>,
+);
+
+static USB: Mutex<Cell<Option<UsbDevices>>> = Mutex::new(Cell::new(None));
 
 static KEYBOARD_STATUS: Mutex<Cell<(Leds, UsbDeviceState)>> =
     Mutex::new(Cell::new((Leds::empty(), UsbDeviceState::Default)));
@@ -115,6 +99,17 @@ fn main() -> ! {
     display.init().unwrap();
     display.flush().unwrap();
 
+    let mut oled_display = OledDisplay::new(display, &timer);
+
+    if let Some(msg) = panic_persist::get_panic_message_utf8() {
+        oled_display.draw_text_screen(msg).ok();
+        loop {
+            cortex_m::asm::nop();
+        }
+    }
+
+    log::set_max_level(LevelFilter::Info);
+
     //Init USB
     static mut USB_ALLOC: Option<UsbBusAllocator<hal::usb::UsbBus>> = None;
 
@@ -132,12 +127,12 @@ fn main() -> ! {
     let usb_alloc = unsafe { USB_ALLOC.as_ref().unwrap() };
 
     let usb_keyboard = usbd_hid_devices::hid::UsbHidClass::new(
-        &usb_alloc,
+        usb_alloc,
         usbd_hid_devices::keyboard::HidBootKeyboard::default(),
     );
     // Create a USB device with https://pid.code VID and a test PID
     //https://pid.codes
-    let usb_device = UsbDeviceBuilder::new(&usb_alloc, UsbVidPid(0x1209, 0x0004))
+    let usb_device = UsbDeviceBuilder::new(usb_alloc, UsbVidPid(0x1209, 0x0004))
         .manufacturer("DLKJ")
         .product("pichocnano")
         .serial_number("TEST")
@@ -149,18 +144,6 @@ fn main() -> ! {
     cortex_m::interrupt::free(|cs| {
         USB.borrow(cs).replace(Some((usb_device, usb_keyboard)));
     });
-
-    log::set_max_level(LevelFilter::Info);
-
-    // Enable the USB interrupt
-    // unsafe {
-    //     pac::NVIC::unmask(hal::pac::Interrupt::USBCTRL_IRQ);
-    // };
-
-    // let rot_pin_a = DebouncedPin::<DynPin>::new(pins.gpio16.into_pull_up_input().into(), true);
-    // let rot_pin_b = DebouncedPin::<DynPin>::new(pins.gpio17.into_pull_up_input().into(), true);
-
-    // let mut rot_enc = RotaryEncoder::new(rot_pin_a, rot_pin_b);
 
     let cols: [DynPin; 6] = [
         pins.gpio20.into_pull_down_input().into(),
@@ -193,8 +176,6 @@ fn main() -> ! {
 
     let _tx_pin = pins.gpio12.into_mode::<FunctionUart>();
     let _rx_pin = pins.gpio13.into_mode::<FunctionUart>();
-
-    let mut oled_display = OledDisplay::new(display, &timer);
 
     // Splash screen
     oled_display.draw_text_screen("Starting...").unwrap();
@@ -306,42 +287,4 @@ fn USBCTRL_IRQ() {
         });
     }
     cortex_m::asm::sev();
-}
-
-#[inline(never)]
-#[panic_handler]
-fn panic(info: &PanicInfo) -> ! {
-    error!("{}", info);
-
-    let mut output = arrayvec::ArrayString::<1024>::new();
-    if write!(&mut output, "{}", info).ok().is_some() {
-        // cortex_m::interrupt::free(|cs| {
-        //     let mut display_ref = OLED_DISPLAY.borrow(cs).borrow_mut();
-        //     if let Some(display) = display_ref.as_mut() {
-        //         display.clear();
-        //         let character_style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
-        //         let textbox_style = TextBoxStyleBuilder::new()
-        //             .height_mode(HeightMode::FitToText)
-        //             .alignment(HorizontalAlignment::Left)
-        //             .build();
-        //         let bounds = Rectangle::new(Point::zero(), Size::new(32, 0));
-        //         let text_box = TextBox::with_textbox_style(
-        //             output.as_str(),
-        //             bounds,
-        //             character_style,
-        //             textbox_style,
-        //         );
-
-        //         text_box.draw(display)?;
-        //         display.flush()
-        //     } else {
-        //         Ok(())
-        //     }
-        // })
-        // .ok();
-    }
-
-    loop {
-        atomic::compiler_fence(Ordering::SeqCst);
-    }
 }
