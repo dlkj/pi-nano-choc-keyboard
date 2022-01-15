@@ -107,7 +107,7 @@ where
         for r in &mut self.rows {
             r.set_high().unwrap();
 
-            //allow time for output to stabilise beore scanning columns
+            //allow time for output to stabilize before scanning columns
             for _ in 0..10 {
                 cortex_m::asm::nop();
             }
@@ -161,6 +161,7 @@ where
 
 pub struct UartMatrix<U> {
     uart: U,
+    sync: bool,
     current: arrayvec::ArrayVec<u8, 128>,
     next: arrayvec::ArrayVec<u8, 128>,
 }
@@ -169,6 +170,7 @@ impl<U> UartMatrix<U> {
     pub fn new(uart: U) -> Self {
         Self {
             uart,
+            sync: false,
             current: arrayvec::ArrayVec::new(),
             next: arrayvec::ArrayVec::new(),
         }
@@ -183,7 +185,13 @@ where
 
     fn update(&mut self) -> Result<(), Self::Error> {
         while let Ok(x) = self.uart.read() {
-            if x == 0xFF {
+            if !self.sync {
+                if x == 0xFF {
+                    self.sync = true;
+                } else {
+                    continue;
+                }
+            } else if x == 0xFF {
                 self.current = self.next.take();
             } else if x < 36 {
                 self.next.push(x);
