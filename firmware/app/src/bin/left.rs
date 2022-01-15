@@ -4,7 +4,9 @@
 use app::keyboard::keycode::*;
 use app::keyboard::*;
 use app::oled_display::OledDisplay;
+use arrayvec::ArrayVec;
 use core::cell::Cell;
+use core::cell::RefCell;
 use cortex_m::interrupt::Mutex;
 use cortex_m::prelude::*;
 use cortex_m_rt::entry;
@@ -50,7 +52,8 @@ static USB: Mutex<Cell<Option<UsbDevices>>> = Mutex::new(Cell::new(None));
 
 static KEYBOARD_STATUS: Mutex<Cell<(Leds, UsbDeviceState)>> =
     Mutex::new(Cell::new((Leds::empty(), UsbDeviceState::Default)));
-static KEYBOARD_STATE: Mutex<Cell<Option<KeyboardState<72>>>> = Mutex::new(Cell::new(None));
+static KEYBOARD_STATE: Mutex<RefCell<ArrayVec<KeyCode, 72>>> =
+    Mutex::new(RefCell::new(ArrayVec::new_const()));
 
 #[entry]
 fn main() -> ! {
@@ -134,7 +137,7 @@ fn main() -> ! {
     //https://pid.codes
     let usb_device = UsbDeviceBuilder::new(usb_alloc, UsbVidPid(0x1209, 0x0004))
         .manufacturer("DLKJ")
-        .product("pichocnano")
+        .product("pi-choc-nano")
         .serial_number("TEST")
         .device_class(3) // HID - from: https://www.usb.org/defined-class-codes
         .composite_with_iads()
@@ -142,7 +145,7 @@ fn main() -> ! {
         .build();
 
     cortex_m::interrupt::free(|cs| {
-        USB.borrow(cs).replace(Some((usb_device, usb_keyboard)));
+        USB.borrow(cs).set(Some((usb_device, usb_keyboard)));
     });
 
     let cols: [DynPin; 6] = [
@@ -221,17 +224,19 @@ fn main() -> ! {
 
             //100Hz or slower
             let state = keyboard.state().unwrap();
-            let keycodes = state.keycodes.clone();
-            let layer = state.layer;
+            let (leds, usb_state) = cortex_m::interrupt::free(|cs| {
+                //update keyboard state
+                KEYBOARD_STATE
+                    .borrow(cs)
+                    .borrow_mut()
+                    .clone_from(&state.keycodes);
 
-            let (leds, usb_state) =
-                cortex_m::interrupt::free(|cs| KEYBOARD_STATUS.borrow(cs).get());
-
-            //update keyboard state
-            cortex_m::interrupt::free(|cs| KEYBOARD_STATE.borrow(cs).replace(Some(state)));
+                //Get status
+                KEYBOARD_STATUS.borrow(cs).get()
+            });
 
             oled_display
-                .draw_left_display(leds, &keycodes, layer, usb_state)
+                .draw_left_display(leds, &state.keycodes, state.layer, usb_state)
                 .ok();
         }
     }
@@ -247,44 +252,39 @@ fn USBCTRL_IRQ() {
 
     if USB_DEVICES.is_none() {
         cortex_m::interrupt::free(|cs| {
-            *USB_DEVICES = USB.borrow(cs).replace(None);
+            *USB_DEVICES = USB.borrow(cs).take();
         });
     }
 
     if let Some((ref mut usb_device, ref mut usb_keyboard)) = USB_DEVICES.as_mut() {
-        let mut leds = None;
-        if usb_device.state() != UsbDeviceState::Configured {
-            leds = Some(Leds::empty());
-        }
+        let mut leds = if usb_device.state() != UsbDeviceState::Configured {
+            Some(Leds::empty())
+        } else {
+            None
+        };
 
         if usb_device.poll(&mut [usb_keyboard]) {
             leds = match usb_keyboard.read_leds() {
                 Ok(leds) => Some(leds.into()),
-
                 Err(UsbError::WouldBlock) => None,
                 Err(_) => Some(Leds::empty()),
             };
-
             cortex_m::interrupt::free(|cs| {
-                if let Some(state) = KEYBOARD_STATE.borrow(cs).replace(None) {
-                    if usb_keyboard
-                        .write_keycodes(state.keycodes.iter().map(|&k| k as u8))
-                        .is_err()
-                    {
-                        KEYBOARD_STATE.borrow(cs).replace(Some(state));
-                    }
-                }
+                usb_keyboard
+                    .write_keycodes(KEYBOARD_STATE.borrow(cs).borrow().iter().map(|&k| k as u8))
+                    .ok()
             });
         }
 
         cortex_m::interrupt::free(|cs| {
+            let (last_leds, _) = KEYBOARD_STATUS.borrow(cs).get();
+
             //update leds
-            if let Some(new_leds) = leds {
-                KEYBOARD_STATUS
-                    .borrow(cs)
-                    .replace((new_leds, usb_device.state()));
-            }
+            KEYBOARD_STATUS
+                .borrow(cs)
+                .set((leds.unwrap_or(last_leds), usb_device.state()));
         });
     }
+
     cortex_m::asm::sev();
 }

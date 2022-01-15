@@ -22,7 +22,7 @@ pub enum KeyFunction {
     //Todo modifer + keycode
 }
 
-#[derive(Default, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone)]
 pub struct KeyState {
     pub pressed: bool,
 }
@@ -212,6 +212,7 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct KeyboardLayoutState<const KEY_COUNT: usize> {
     pub keycodes: ArrayVec<KeyCode, KEY_COUNT>,
     pub layer: usize,
@@ -316,6 +317,7 @@ impl<const N: usize, const L: usize> KeyboardLayout<N> for LayerdKeyboardLayout<
     }
 }
 
+#[derive(Debug)]
 pub struct KeyboardState<const KEY_COUNT: usize> {
     pub keycodes: ArrayVec<KeyCode, KEY_COUNT>,
     pub keys: [KeyState; KEY_COUNT],
