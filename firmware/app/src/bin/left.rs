@@ -4,7 +4,7 @@
 use app::keyboard::keycode::*;
 use app::keyboard::*;
 use app::oled_display::OledDisplay;
-use arrayvec::ArrayVec;
+use arrayvec::*;
 use core::cell::Cell;
 use core::cell::RefCell;
 use cortex_m::interrupt::Mutex;
@@ -104,12 +104,7 @@ fn main() -> ! {
 
     let mut oled_display = OledDisplay::new(display, &timer);
 
-    if let Some(msg) = panic_persist::get_panic_message_utf8() {
-        oled_display.draw_text_screen(msg).ok();
-        loop {
-            cortex_m::asm::nop();
-        }
-    }
+    app::check_for_persisted_panic(&mut oled_display);
 
     log::set_max_level(LevelFilter::Info);
 
@@ -220,8 +215,6 @@ fn main() -> ! {
 
         //10ms
         if slow_countdown.wait().is_ok() {
-            //led_pin.toggle().unwrap();
-
             //100Hz or slower
             let state = keyboard.state().unwrap();
             let (leds, usb_state) = cortex_m::interrupt::free(|cs| {
@@ -285,6 +278,5 @@ fn USBCTRL_IRQ() {
                 .set((leds.unwrap_or(last_leds), usb_device.state()));
         });
     }
-
     cortex_m::asm::sev();
 }
