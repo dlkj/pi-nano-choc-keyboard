@@ -1,30 +1,34 @@
 #![no_std]
 #![no_main]
 
-use app::keyboard::*;
-use cortex_m::prelude::_embedded_hal_timer_CountDown;
 use cortex_m_rt::entry;
 use embedded_hal::digital::v2::OutputPin;
 use embedded_hal::prelude::_embedded_hal_serial_Write;
-use embedded_time::duration::Extensions;
+use embedded_time::duration::Milliseconds;
+use embedded_time::Clock;
 use log::{info, LevelFilter};
 use nb::block;
 use panic_persist as _;
 use rp_pico::hal::clocks::{self, ClocksManager};
 use rp_pico::hal::gpio::FunctionUart;
 use rp_pico::hal::uart::{self, UartPeripheral};
-use rp_pico::hal::{self, Clock};
+use rp_pico::hal::{self, Clock as _};
 use rp_pico::{
     hal::{
         gpio::DynPin,
         pac::{self},
         sio::Sio,
-        timer::Timer,
         watchdog::Watchdog,
     },
     Pins,
 };
 use ssd1306::{prelude::*, size::DisplaySize128x32, I2CDisplayInterface, Ssd1306};
+
+use app::keyboard::*;
+use app::SyncTimerClock;
+
+const INPUT_SAMPLE: Milliseconds = Milliseconds(10);
+const PIN_SAMPLE: Milliseconds = Milliseconds(1);
 
 #[entry]
 fn main() -> ! {
@@ -52,7 +56,14 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
-    let timer = Timer::new(pac.TIMER, &mut pac.RESETS);
+    static mut CLOCK: Option<SyncTimerClock> = None;
+    let clock = unsafe {
+        CLOCK = Some(SyncTimerClock::new(hal::Timer::new(
+            pac.TIMER,
+            &mut pac.RESETS,
+        )));
+        CLOCK.as_ref().unwrap()
+    };
 
     //Init display
     let scl_pin = pins.gpio17.into_mode::<rp_pico::hal::gpio::FunctionI2C>();
@@ -72,7 +83,7 @@ fn main() -> ! {
         .into_buffered_graphics_mode();
     display.init().unwrap();
     display.flush().unwrap();
-    let mut oled_display = app::oled_display::OledDisplay::new(display, &timer);
+    let mut oled_display = app::oled_display::OledDisplay::new(display, clock);
 
     app::check_for_persisted_panic(&mut oled_display);
 
@@ -127,18 +138,18 @@ fn main() -> ! {
 
     let mut matrix = DiodePinMatrix::new(rows, cols);
 
-    let mut fast_countdown = timer.count_down();
-    fast_countdown.start(100.nanoseconds());
+    let mut pin_sample_timer = clock.new_timer(PIN_SAMPLE).into_periodic().start().unwrap();
 
-    let mut slow_countdown = timer.count_down();
-    slow_countdown.start(20.milliseconds());
-
-    //let mut led_pin = pins.led.into_readable_output();
+    let mut input_timer = clock
+        .new_timer(INPUT_SAMPLE)
+        .into_periodic()
+        .start()
+        .unwrap();
 
     info!("Running main loop");
     loop {
-        //0.1ms scan the keys and debounce
-        if fast_countdown.wait().is_ok() {
+        //1ms scan the keys and debounce (was .1 ms)
+        if pin_sample_timer.period_complete().unwrap() {
             // let (p_a, p_b) = rot_enc.pins_borrow_mut();
             // p_a.update().expect("Failed to update rot a debouncer");
             // p_b.update().expect("Failed to update rot b debouncer");
@@ -150,7 +161,7 @@ fn main() -> ! {
         }
 
         //10ms
-        if slow_countdown.wait().is_ok() {
+        if input_timer.period_complete().unwrap() {
             //100Hz or slower
             let keys = matrix.keys().expect("Failed to get matrix keys");
 

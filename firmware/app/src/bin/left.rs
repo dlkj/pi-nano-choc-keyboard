@@ -1,39 +1,43 @@
 #![no_std]
 #![no_main]
 
-use app::keyboard::keycode::*;
-use app::keyboard::*;
-use app::oled_display::OledDisplay;
-use arrayvec::*;
-use core::cell::Cell;
 use core::cell::RefCell;
+use core::default::Default;
+
 use cortex_m::interrupt::Mutex;
-use cortex_m::prelude::*;
 use cortex_m_rt::entry;
 use embedded_hal::digital::v2::OutputPin;
-use embedded_time::duration::Extensions;
+use embedded_time::duration::Milliseconds;
+use embedded_time::Clock;
+use frunk::HList;
 use log::{info, LevelFilter};
 use panic_persist as _;
 use rp_pico::hal::clocks::{self, ClocksManager};
 use rp_pico::hal::gpio::DynPin;
 use rp_pico::hal::gpio::FunctionUart;
 use rp_pico::hal::uart::{self, UartPeripheral};
-use rp_pico::hal::{self, Clock};
+use rp_pico::hal::{self, Clock as _};
 use rp_pico::{
     hal::{
         pac::{self, interrupt},
         sio::Sio,
-        timer::Timer,
         watchdog::Watchdog,
     },
     Pins,
 };
 use ssd1306::{prelude::*, size::DisplaySize128x32, I2CDisplayInterface, Ssd1306};
 use usb_device::class_prelude::*;
-use usb_device::device::UsbDeviceState;
 use usb_device::prelude::*;
-use usbd_hid_devices::hid::UsbHidClass;
-use usbd_hid_devices::keyboard::HidKeyboard;
+use usbd_hid_devices::device::consumer::{ConsumerControlInterface, MultipleConsumerReport};
+use usbd_hid_devices::device::keyboard::{KeyboardLedsReport, NKROBootKeyboardInterface};
+use usbd_hid_devices::device::mouse::{WheelMouseInterface, WheelMouseReport};
+use usbd_hid_devices::hid_class::UsbHidClass;
+use usbd_hid_devices::page::Consumer;
+use usbd_hid_devices::prelude::*;
+
+use app::keyboard::*;
+use app::oled_display::OledDisplay;
+use app::SyncTimerClock;
 
 // TODO:
 // * Serial logging
@@ -43,17 +47,23 @@ use usbd_hid_devices::keyboard::HidKeyboard;
 // * Rotary encoders
 // * Consumer control support
 
-type UsbDevices = (
+type UsbShared = (
     UsbDevice<'static, hal::usb::UsbBus>,
-    UsbHidClass<'static, hal::usb::UsbBus, usbd_hid_devices::keyboard::HidBootKeyboard>,
+    UsbHidClass<
+        hal::usb::UsbBus,
+        HList!(
+            ConsumerControlInterface<'static, hal::usb::UsbBus>,
+            WheelMouseInterface<'static, hal::usb::UsbBus>,
+            NKROBootKeyboardInterface<'static, hal::usb::UsbBus, SyncTimerClock>,
+        ),
+    >,
+    KeyboardLedsReport,
 );
 
-static USB: Mutex<Cell<Option<UsbDevices>>> = Mutex::new(Cell::new(None));
+static IRQ_SHARED: Mutex<RefCell<Option<UsbShared>>> = Mutex::new(RefCell::new(None));
 
-static KEYBOARD_STATUS: Mutex<Cell<(Leds, UsbDeviceState)>> =
-    Mutex::new(Cell::new((Leds::empty(), UsbDeviceState::Default)));
-static KEYBOARD_STATE: Mutex<RefCell<ArrayVec<KeyCode, 72>>> =
-    Mutex::new(RefCell::new(ArrayVec::new_const()));
+const INPUT_SAMPLE: Milliseconds = Milliseconds(10);
+const PIN_SAMPLE: Milliseconds = Milliseconds(1);
 
 #[entry]
 fn main() -> ! {
@@ -81,7 +91,14 @@ fn main() -> ! {
         &mut pac.RESETS,
     );
 
-    let timer = Timer::new(pac.TIMER, &mut pac.RESETS);
+    static mut CLOCK: Option<SyncTimerClock> = None;
+    let clock = unsafe {
+        CLOCK = Some(SyncTimerClock::new(hal::Timer::new(
+            pac.TIMER,
+            &mut pac.RESETS,
+        )));
+        CLOCK.as_ref().unwrap()
+    };
 
     //Init display
     let scl_pin = pins.gpio15.into_mode::<hal::gpio::FunctionI2C>();
@@ -102,7 +119,7 @@ fn main() -> ! {
     display.init().unwrap();
     display.flush().unwrap();
 
-    let mut oled_display = OledDisplay::new(display, &timer);
+    let mut oled_display = OledDisplay::new(display, clock);
 
     app::check_for_persisted_panic(&mut oled_display);
 
@@ -124,26 +141,33 @@ fn main() -> ! {
 
     let usb_alloc = unsafe { USB_ALLOC.as_ref().unwrap() };
 
-    let usb_keyboard = usbd_hid_devices::hid::UsbHidClass::new(
-        usb_alloc,
-        usbd_hid_devices::keyboard::HidBootKeyboard::default(),
-    );
+    let usb_keyboard = UsbHidClassBuilder::new()
+        .add_interface(
+            usbd_hid_devices::device::keyboard::NKROBootKeyboardInterface::default_config(clock),
+        )
+        .add_interface(usbd_hid_devices::device::mouse::WheelMouseInterface::default_config())
+        .add_interface(
+            usbd_hid_devices::device::consumer::ConsumerControlInterface::default_config(),
+        )
+        //Build
+        .build(usb_alloc);
+
     // Create a USB device with https://pid.code VID and a test PID
     //https://pid.codes
     let usb_device = UsbDeviceBuilder::new(usb_alloc, UsbVidPid(0x1209, 0x0004))
         .manufacturer("DLKJ")
         .product("pi-choc-nano")
-        .serial_number("TEST")
-        .device_class(3) // HID - from: https://www.usb.org/defined-class-codes
-        .composite_with_iads()
-        .supports_remote_wakeup(true)
+        .serial_number("1")
+        .supports_remote_wakeup(false)
         .build();
 
     cortex_m::interrupt::free(|cs| {
-        USB.borrow(cs).set(Some((usb_device, usb_keyboard)));
+        IRQ_SHARED
+            .borrow(cs)
+            .replace(Some((usb_device, usb_keyboard, Default::default())));
     });
 
-    let cols: [DynPin; 6] = [
+    let input_cols: [DynPin; 6] = [
         pins.gpio20.into_pull_down_input().into(),
         pins.gpio21.into_pull_down_input().into(),
         pins.gpio22.into_pull_down_input().into(),
@@ -152,7 +176,7 @@ fn main() -> ! {
         pins.gpio28.into_pull_down_input().into(),
     ];
 
-    let mut rows: [DynPin; 6] = [
+    let mut output_rows: [DynPin; 6] = [
         pins.gpio5.into_push_pull_output().into(),
         pins.gpio6.into_push_pull_output().into(),
         pins.gpio7.into_push_pull_output().into(),
@@ -161,7 +185,7 @@ fn main() -> ! {
         pins.gpio11.into_push_pull_output().into(),
     ];
 
-    for p in &mut rows {
+    for p in &mut output_rows {
         p.set_low().unwrap();
     }
 
@@ -187,45 +211,98 @@ fn main() -> ! {
 
     let mut keyboard = Keyboard::new(
         SplitMatrix {
-            matrix1: DiodePinMatrix::new(rows, cols),
+            matrix1: DiodePinMatrix::new(output_rows, input_cols),
             matrix2: UartMatrix::new(uart),
         },
         LayerdKeyboardLayout::new(app::key_map::KEY_MAP),
     );
 
-    let mut fast_countdown = timer.count_down();
-    fast_countdown.start(100.nanoseconds());
+    let mut pin_sample_timer = clock.new_timer(PIN_SAMPLE).into_periodic().start().unwrap();
 
-    let mut slow_countdown = timer.count_down();
-    slow_countdown.start(20.milliseconds());
+    let mut input_timer = clock
+        .new_timer(INPUT_SAMPLE)
+        .into_periodic()
+        .start()
+        .unwrap();
+
+    let mut last_mouse_buttons = 0;
+    let mut mouse_report = WheelMouseReport::default();
+    let mut last_consumer_report = MultipleConsumerReport::default();
 
     info!("Running main loop");
     loop {
-        //0.1ms scan the keys and debounce
-        if fast_countdown.wait().is_ok() {
+        //1ms scan the keys and debounce (was .1ms)
+        if pin_sample_timer.period_complete().unwrap() {
             // let (p_a, p_b) = rot_enc.pins_borrow_mut();
             // p_a.update().expect("Failed to update rot a debouncer");
             // p_b.update().expect("Failed to update rot b debouncer");
 
-            //todo: move onto an interupt timer
+            //todo: move onto an interrupt timer
             //rot_enc.update();
 
             keyboard.update().expect("Failed to update keyboard");
         }
 
         //10ms
-        if slow_countdown.wait().is_ok() {
+        if input_timer.period_complete().unwrap() {
             //100Hz or slower
             let state = keyboard.state().unwrap();
+
             let (leds, usb_state) = cortex_m::interrupt::free(|cs| {
-                //update keyboard state
-                KEYBOARD_STATE
-                    .borrow(cs)
-                    .borrow_mut()
-                    .clone_from(&state.keycodes);
+                let mut usb_ref = IRQ_SHARED.borrow(cs).borrow_mut();
+                let (ref mut usb_device, ref mut composite, ref leds) = usb_ref.as_mut().unwrap();
+
+                let keyboard = composite.interface::<NKROBootKeyboardInterface<'_, _, _>, _>();
+                match keyboard.write_report(&state.keycodes) {
+                    Err(UsbHidError::WouldBlock) => {}
+                    Err(UsbHidError::Duplicate) => {}
+                    Ok(_) => {}
+                    Err(e) => {
+                        panic!("Failed to write keyboard report: {:?}", e)
+                    }
+                };
+
+                if mouse_report.buttons != last_mouse_buttons
+                    || mouse_report.x != 0
+                    || mouse_report.y != 0
+                {
+                    let mouse = composite.interface::<WheelMouseInterface<'_, _>, _>();
+                    match mouse.write_report(&mouse_report) {
+                        Err(UsbHidError::WouldBlock) => {}
+                        Ok(_) => {
+                            last_mouse_buttons = mouse_report.buttons;
+                            mouse_report = Default::default();
+                        }
+                        Err(e) => {
+                            panic!("Failed to write mouse report: {:?}", e)
+                        }
+                    };
+                }
+
+                let consumer_report = MultipleConsumerReport {
+                    codes: [
+                        Consumer::Unassigned,
+                        Consumer::Unassigned,
+                        Consumer::Unassigned,
+                        Consumer::Unassigned,
+                    ],
+                };
+
+                if last_consumer_report != consumer_report {
+                    let consumer = composite.interface::<ConsumerControlInterface<'_, _>, _>();
+                    match consumer.write_report(&consumer_report) {
+                        Err(UsbError::WouldBlock) => {}
+                        Ok(_) => {
+                            last_consumer_report = consumer_report;
+                        }
+                        Err(e) => {
+                            panic!("Failed to write consumer report: {:?}", e)
+                        }
+                    };
+                }
 
                 //Get status
-                KEYBOARD_STATUS.borrow(cs).get()
+                (*leds, usb_device.state())
             });
 
             oled_display
@@ -238,45 +315,26 @@ fn main() -> ! {
 #[allow(non_snake_case)]
 #[interrupt]
 fn USBCTRL_IRQ() {
-    static mut USB_DEVICES: Option<(
-        UsbDevice<'static, hal::usb::UsbBus>,
-        UsbHidClass<'static, hal::usb::UsbBus, usbd_hid_devices::keyboard::HidBootKeyboard>,
-    )> = None;
-
-    if USB_DEVICES.is_none() {
-        cortex_m::interrupt::free(|cs| {
-            *USB_DEVICES = USB.borrow(cs).take();
-        });
-    }
-
-    if let Some((ref mut usb_device, ref mut usb_keyboard)) = USB_DEVICES.as_mut() {
-        let mut leds = if usb_device.state() != UsbDeviceState::Configured {
-            Some(Leds::empty())
-        } else {
-            None
-        };
-
-        if usb_device.poll(&mut [usb_keyboard]) {
-            leds = match usb_keyboard.read_leds() {
-                Ok(leds) => Some(leds.into()),
-                Err(UsbError::WouldBlock) => None,
-                Err(_) => Some(Leds::empty()),
-            };
-            cortex_m::interrupt::free(|cs| {
-                usb_keyboard
-                    .write_keycodes(KEYBOARD_STATE.borrow(cs).borrow().iter().map(|&k| k as u8))
-                    .ok()
-            });
+    cortex_m::interrupt::free(|cs| {
+        let mut usb_ref = IRQ_SHARED.borrow(cs).borrow_mut();
+        if usb_ref.is_none() {
+            return;
         }
 
-        cortex_m::interrupt::free(|cs| {
-            let (last_leds, _) = KEYBOARD_STATUS.borrow(cs).get();
+        let (ref mut usb_device, ref mut composite, ref mut leds) = usb_ref.as_mut().unwrap();
+        if usb_device.poll(&mut [composite]) {
+            let keyboard = composite.interface::<NKROBootKeyboardInterface<'_, _, _>, _>();
+            match keyboard.read_report() {
+                Err(UsbError::WouldBlock) => {}
+                Err(e) => {
+                    panic!("Failed to read keyboard report: {:?}", e)
+                }
+                Ok(l) => {
+                    *leds = l;
+                }
+            }
+        }
+    });
 
-            //update leds
-            KEYBOARD_STATUS
-                .borrow(cs)
-                .set((leds.unwrap_or(last_leds), usb_device.state()));
-        });
-    }
     cortex_m::asm::sev();
 }

@@ -1,10 +1,9 @@
-use crate::debounce::DebouncedPin;
-use crate::keyboard::keycode::KeyCode;
 use arrayvec::ArrayVec;
 use embedded_hal::digital::v2::InputPin;
 use embedded_hal::digital::v2::OutputPin;
+use usbd_hid_devices::page::Keyboard as KeyCode;
 
-pub mod keycode;
+use crate::debounce::DebouncedPin;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum KeyAction {
