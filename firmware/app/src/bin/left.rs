@@ -6,8 +6,9 @@ use core::default::Default;
 
 use cortex_m::interrupt::Mutex;
 use cortex_m_rt::entry;
-use embedded_hal::digital::v2::OutputPin;
-use embedded_time::duration::Milliseconds;
+use embedded_hal::digital::v2::InputPin;
+use embedded_hal::digital::v2::{OutputPin, PinState};
+use embedded_time::duration::{Microseconds, Milliseconds};
 use embedded_time::Clock;
 use frunk::HList;
 use log::{info, LevelFilter};
@@ -37,6 +38,7 @@ use usbd_hid_devices::prelude::*;
 
 use app::keyboard::*;
 use app::oled_display::OledDisplay;
+use app::rotary_enc::RotaryEncoder;
 use app::SyncTimerClock;
 
 // TODO:
@@ -63,7 +65,7 @@ type UsbShared = (
 static IRQ_SHARED: Mutex<RefCell<Option<UsbShared>>> = Mutex::new(RefCell::new(None));
 
 const INPUT_SAMPLE: Milliseconds = Milliseconds(10);
-const PIN_SAMPLE: Milliseconds = Milliseconds(1);
+const PIN_SAMPLE: Microseconds = Microseconds(100);
 
 #[entry]
 fn main() -> ! {
@@ -189,6 +191,17 @@ fn main() -> ! {
         p.set_low().unwrap();
     }
 
+    let mut led_pin = pins.led.into_push_pull_output();
+
+    let rot_button = pins.gpio8.into_pull_up_input();
+    // let rot_a = DebouncedPin::new(pins.gpio16.into_pull_up_input(), true);
+    // let rot_b =  DebouncedPin::new(pins.gpio17.into_pull_up_input(), true);
+
+    let rot_a = pins.gpio16.into_pull_up_input();
+    let rot_b = pins.gpio17.into_pull_up_input();
+
+    let mut rot_enc = RotaryEncoder::new(&rot_a, &rot_b);
+
     let uart = UartPeripheral::<_, _>::new(pac.UART0, &mut pac.RESETS)
         .enable(
             uart::common_configs::_19200_8_N_1,
@@ -231,14 +244,16 @@ fn main() -> ! {
 
     info!("Running main loop");
     loop {
-        //1ms scan the keys and debounce (was .1ms)
-        if pin_sample_timer.period_complete().unwrap() {
-            // let (p_a, p_b) = rot_enc.pins_borrow_mut();
-            // p_a.update().expect("Failed to update rot a debouncer");
-            // p_b.update().expect("Failed to update rot b debouncer");
+        led_pin
+            .set_state(PinState::from(rot_a.is_low().unwrap()))
+            .unwrap();
 
-            //todo: move onto an interrupt timer
-            //rot_enc.update();
+        rot_enc.update();
+
+        //.1ms scan the keys and debounce
+        if pin_sample_timer.period_complete().unwrap() {
+            // rot_a.update().unwrap();
+            // rot_b.update().unwrap();
 
             keyboard.update().expect("Failed to update keyboard");
         }
@@ -279,11 +294,24 @@ fn main() -> ! {
                     };
                 }
 
+                let rel_rot = rot_enc.rel_value();
                 let consumer_report = MultipleConsumerReport {
                     codes: [
-                        Consumer::Unassigned,
-                        Consumer::Unassigned,
-                        Consumer::Unassigned,
+                        if rot_button.is_low().unwrap() {
+                            Consumer::PlayPause
+                        } else {
+                            Consumer::Unassigned
+                        },
+                        if rel_rot.is_negative() {
+                            Consumer::VolumeDecrement
+                        } else {
+                            Consumer::Unassigned
+                        },
+                        if rel_rot.is_positive() {
+                            Consumer::VolumeIncrement
+                        } else {
+                            Consumer::Unassigned
+                        },
                         Consumer::Unassigned,
                     ],
                 };
@@ -306,7 +334,13 @@ fn main() -> ! {
             });
 
             oled_display
-                .draw_left_display(leds, &state.keycodes, state.layer, usb_state)
+                .draw_left_display(
+                    leds,
+                    &state.keycodes,
+                    state.layer,
+                    usb_state,
+                    rot_enc.abs_value(),
+                )
                 .ok();
         }
     }

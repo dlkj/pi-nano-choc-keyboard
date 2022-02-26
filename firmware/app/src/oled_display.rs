@@ -141,6 +141,29 @@ where
         Ok(())
     }
 
+    fn draw_rot(display: &mut D, top_left: Point, rot: i32) -> Result<(), DisplayError> {
+        let text_style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
+
+        let bounding_box = Rectangle::new(top_left, Size::new(32, 6));
+
+        let mut buffer = arrayvec::ArrayString::<256>::new();
+        let text = if rot == 0 {
+            "Zero"
+        } else {
+            write!(&mut buffer, "{}", rot).unwrap();
+            &buffer[..]
+        };
+
+        Text::with_alignment(
+            text,
+            bounding_box.center() + Point::new(0, 4),
+            text_style,
+            Alignment::Center,
+        )
+        .draw(display)?;
+        Ok(())
+    }
+
     fn draw_keycode_indicator(
         display: &mut D,
         top_left: Point,
@@ -214,6 +237,7 @@ where
         keycodes: &[KeyCode],
         layer: usize,
         usb_state: UsbDeviceState,
+        rot: i32,
     ) -> Result<(), DisplayError> {
         let (modifier_active, key_active) = keycodes.iter().fold((false, false), |(am, ak), &k| {
             (
@@ -255,6 +279,8 @@ where
 
             //Layer
             Self::draw_layer_indicator(&mut self.display, Point::new(0, 17), layer)?;
+
+            Self::draw_rot(&mut self.display, Point::new(0, 25), rot)?;
 
             //Keycode indicator
             Self::draw_keycode_indicator(

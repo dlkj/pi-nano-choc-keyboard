@@ -1,7 +1,9 @@
+use core::cell::Cell;
+
 pub struct DebouncedPin<P> {
     pin: P,
-    last: bool,
-    history: u8,
+    last: Cell<bool>,
+    history: Cell<u8>,
 }
 
 impl<P, E> DebouncedPin<P>
@@ -11,20 +13,21 @@ where
     pub fn new(pin: P, default_state: bool) -> DebouncedPin<P> {
         DebouncedPin {
             pin,
-            last: default_state,
-            history: if default_state { u8::MAX } else { 0 },
+            last: Cell::new(default_state),
+            history: Cell::new(if default_state { u8::MAX } else { 0 }),
         }
     }
 
-    pub fn update(&mut self) -> Result<(), E> {
+    pub fn update(&self) -> Result<(), E> {
         const MASK: u8 = 0b11100000; //look for 5 stable values
 
-        self.history = (self.history << 1) | if self.pin.is_high()? { 1 } else { 0 } | MASK;
+        let history = (self.history.get() << 1) | if self.pin.is_high()? { 1 } else { 0 } | MASK;
+        self.history.set(history);
 
-        self.last = match self.history {
-            u8::MAX => true,
-            MASK => false,
-            _ => self.last,
+        match history {
+            u8::MAX => self.last.set(true),
+            MASK => self.last.set(false),
+            _ => (),
         };
 
         Ok(())
@@ -44,10 +47,10 @@ where
     type Error = P::Error;
 
     fn is_high(&self) -> Result<bool, Self::Error> {
-        Ok(self.last)
+        Ok(self.last.get())
     }
     fn is_low(&self) -> Result<bool, Self::Error> {
-        Ok(!self.last)
+        Ok(!self.last.get())
     }
 }
 
