@@ -65,6 +65,7 @@ type UsbShared = (
 static IRQ_SHARED: Mutex<RefCell<Option<UsbShared>>> = Mutex::new(RefCell::new(None));
 
 const INPUT_SAMPLE: Milliseconds = Milliseconds(10);
+const DISPLAY_UPDATE: Milliseconds = Milliseconds(40);
 const PIN_SAMPLE: Microseconds = Microseconds(100);
 
 #[entry]
@@ -197,8 +198,8 @@ fn main() -> ! {
     // let rot_a = DebouncedPin::new(pins.gpio16.into_pull_up_input(), true);
     // let rot_b =  DebouncedPin::new(pins.gpio17.into_pull_up_input(), true);
 
-    let rot_a = pins.gpio16.into_pull_up_input();
-    let rot_b = pins.gpio17.into_pull_up_input();
+    let rot_b = pins.gpio16.into_pull_up_input();
+    let rot_a = pins.gpio17.into_pull_up_input();
 
     let mut rot_enc = RotaryEncoder::new(&rot_a, &rot_b);
 
@@ -238,23 +239,26 @@ fn main() -> ! {
         .start()
         .unwrap();
 
+    let mut display_timer = clock
+        .new_timer(DISPLAY_UPDATE)
+        .into_periodic()
+        .start()
+        .unwrap();
+
     let mut last_mouse_buttons = 0;
     let mut mouse_report = WheelMouseReport::default();
     let mut last_consumer_report = MultipleConsumerReport::default();
 
     info!("Running main loop");
     loop {
-        led_pin
-            .set_state(PinState::from(rot_a.is_low().unwrap()))
-            .unwrap();
-
-        rot_enc.update();
-
         //.1ms scan the keys and debounce
         if pin_sample_timer.period_complete().unwrap() {
             // rot_a.update().unwrap();
             // rot_b.update().unwrap();
-
+            led_pin
+                .set_state(PinState::from(rot_a.is_low().unwrap()))
+                .unwrap();
+            rot_enc.update();
             keyboard.update().expect("Failed to update keyboard");
         }
 
@@ -333,15 +337,17 @@ fn main() -> ! {
                 (*leds, usb_device.state())
             });
 
-            oled_display
-                .draw_left_display(
-                    leds,
-                    &state.keycodes,
-                    state.layer,
-                    usb_state,
-                    rot_enc.abs_value(),
-                )
-                .ok();
+            if display_timer.period_complete().unwrap() {
+                oled_display
+                    .draw_left_display(
+                        leds,
+                        &state.keycodes,
+                        state.layer,
+                        usb_state,
+                        rot_enc.abs_value(),
+                    )
+                    .ok();
+            }
         }
     }
 }

@@ -152,7 +152,7 @@ const BASE_MAP: [KeyAction; 72] = [
         code: KeyCode::RightControl,
     },
     //row 5
-    KeyAction::Layer { n: 2 },
+    KeyAction::Layer { n: 1 },
     KeyAction::Key {
         code: KeyCode::ReturnEnter,
     },
