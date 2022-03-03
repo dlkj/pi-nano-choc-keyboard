@@ -1,19 +1,21 @@
 use embedded_hal::digital::v2::InputPin;
 
-pub struct RotaryEncoder<'a, E> {
-    pin_a: &'a dyn InputPin<Error = E>,
-    pin_b: &'a dyn InputPin<Error = E>,
+pub struct RotaryEncoder<InputPinA: InputPin<Error = E>, InputPinB: InputPin<Error = E>, E> {
+    pin_a: InputPinA,
+    pin_b: InputPinB,
     state: u8,
     quarter_idx: i8,
     value: i32,
     last_rel_ref: i32,
 }
 
-impl<'a, E> RotaryEncoder<'a, E>
+impl<InputPinA, InputPinB, E> RotaryEncoder<InputPinA, InputPinB, E>
 where
     E: core::fmt::Debug,
+    InputPinB: InputPin<Error = E>,
+    InputPinA: InputPin<Error = E>,
 {
-    pub fn new(pin_a: &'a dyn InputPin<Error = E>, pin_b: &'a dyn InputPin<Error = E>) -> Self {
+    pub fn new(pin_a: InputPinA, pin_b: InputPinB) -> Self {
         RotaryEncoder {
             pin_a,
             pin_b,

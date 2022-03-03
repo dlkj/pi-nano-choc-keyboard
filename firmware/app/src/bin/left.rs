@@ -2,13 +2,16 @@
 #![no_main]
 
 use core::cell::RefCell;
+use core::convert::Infallible;
 use core::default::Default;
 
 use cortex_m::interrupt::Mutex;
+use cortex_m::peripheral::syst::SystClkSource;
 use cortex_m_rt::entry;
+use cortex_m_rt::exception;
 use embedded_hal::digital::v2::InputPin;
-use embedded_hal::digital::v2::{OutputPin, PinState};
-use embedded_time::duration::{Microseconds, Milliseconds};
+use embedded_hal::digital::v2::OutputPin;
+use embedded_time::duration::Milliseconds;
 use embedded_time::Clock;
 use frunk::HList;
 use log::{info, LevelFilter};
@@ -36,6 +39,7 @@ use usbd_hid_devices::hid_class::UsbHidClass;
 use usbd_hid_devices::page::Consumer;
 use usbd_hid_devices::prelude::*;
 
+use crate::hal::gpio::{Pin, PullUpInput};
 use app::keyboard::*;
 use app::oled_display::OledDisplay;
 use app::rotary_enc::RotaryEncoder;
@@ -62,15 +66,32 @@ type UsbShared = (
     KeyboardLedsReport,
 );
 
-static IRQ_SHARED: Mutex<RefCell<Option<UsbShared>>> = Mutex::new(RefCell::new(None));
+type TimerShared = (
+    app::keyboard::Keyboard<
+        app::keyboard::SplitMatrix<
+            app::keyboard::DiodePinMatrix<DynPin, DynPin>,
+            app::keyboard::UartMatrix<UartPeripheral<hal::uart::Enabled, pac::UART0>>,
+        >,
+        app::keyboard::LayerdKeyboardLayout<72_usize, 3_usize>,
+        72_usize,
+    >,
+    RotaryEncoder<
+        Pin<hal::gpio::pin::bank0::Gpio17, PullUpInput>,
+        Pin<hal::gpio::pin::bank0::Gpio16, PullUpInput>,
+        Infallible,
+    >,
+);
+
+static USB_IRQ_SHARED: Mutex<RefCell<Option<UsbShared>>> = Mutex::new(RefCell::new(None));
+static TIMER_SHARED: Mutex<RefCell<Option<TimerShared>>> = Mutex::new(RefCell::new(None));
 
 const INPUT_SAMPLE: Milliseconds = Milliseconds(10);
 const DISPLAY_UPDATE: Milliseconds = Milliseconds(40);
-const PIN_SAMPLE: Microseconds = Microseconds(100);
 
 #[entry]
 fn main() -> ! {
     let mut pac = pac::Peripherals::take().unwrap();
+    let mut core = pac::CorePeripherals::take().unwrap();
 
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
 
@@ -165,7 +186,7 @@ fn main() -> ! {
         .build();
 
     cortex_m::interrupt::free(|cs| {
-        IRQ_SHARED
+        USB_IRQ_SHARED
             .borrow(cs)
             .replace(Some((usb_device, usb_keyboard, Default::default())));
     });
@@ -192,8 +213,6 @@ fn main() -> ! {
         p.set_low().unwrap();
     }
 
-    let mut led_pin = pins.led.into_push_pull_output();
-
     let rot_button = pins.gpio8.into_pull_up_input();
     // let rot_a = DebouncedPin::new(pins.gpio16.into_pull_up_input(), true);
     // let rot_b =  DebouncedPin::new(pins.gpio17.into_pull_up_input(), true);
@@ -201,7 +220,7 @@ fn main() -> ! {
     let rot_b = pins.gpio16.into_pull_up_input();
     let rot_a = pins.gpio17.into_pull_up_input();
 
-    let mut rot_enc = RotaryEncoder::new(&rot_a, &rot_b);
+    let rot_enc = RotaryEncoder::new(rot_a, rot_b);
 
     let uart = UartPeripheral::<_, _>::new(pac.UART0, &mut pac.RESETS)
         .enable(
@@ -223,7 +242,16 @@ fn main() -> ! {
         pac::NVIC::unmask(hal::pac::Interrupt::USBCTRL_IRQ);
     };
 
-    let mut keyboard = Keyboard::new(
+    //100us
+    let reload_value = 100 - 1;
+    core.SYST.set_reload(reload_value);
+    core.SYST.clear_current();
+    //External clock, driven by the Watchdog - 1 tick per us
+    core.SYST.set_clock_source(SystClkSource::External);
+    core.SYST.enable_interrupt();
+    core.SYST.enable_counter();
+
+    let keyboard = Keyboard::new(
         SplitMatrix {
             matrix1: DiodePinMatrix::new(output_rows, input_cols),
             matrix2: UartMatrix::new(uart),
@@ -231,7 +259,9 @@ fn main() -> ! {
         LayerdKeyboardLayout::new(app::key_map::KEY_MAP),
     );
 
-    let mut pin_sample_timer = clock.new_timer(PIN_SAMPLE).into_periodic().start().unwrap();
+    cortex_m::interrupt::free(|cs| {
+        TIMER_SHARED.borrow(cs).replace(Some((keyboard, rot_enc)));
+    });
 
     let mut input_timer = clock
         .new_timer(INPUT_SAMPLE)
@@ -251,24 +281,18 @@ fn main() -> ! {
 
     info!("Running main loop");
     loop {
-        //.1ms scan the keys and debounce
-        if pin_sample_timer.period_complete().unwrap() {
-            // rot_a.update().unwrap();
-            // rot_b.update().unwrap();
-            led_pin
-                .set_state(PinState::from(rot_a.is_low().unwrap()))
-                .unwrap();
-            rot_enc.update();
-            keyboard.update().expect("Failed to update keyboard");
-        }
-
         //10ms
         if input_timer.period_complete().unwrap() {
             //100Hz or slower
-            let state = keyboard.state().unwrap();
+            let (state, rel_rot) = cortex_m::interrupt::free(|cs| {
+                let mut timer_ref = TIMER_SHARED.borrow(cs).borrow_mut();
+
+                let (ref mut keyboard, ref mut rot_enc) = timer_ref.as_mut().unwrap();
+                (keyboard.state().unwrap(), rot_enc.rel_value())
+            });
 
             let (leds, usb_state) = cortex_m::interrupt::free(|cs| {
-                let mut usb_ref = IRQ_SHARED.borrow(cs).borrow_mut();
+                let mut usb_ref = USB_IRQ_SHARED.borrow(cs).borrow_mut();
                 let (ref mut usb_device, ref mut composite, ref leds) = usb_ref.as_mut().unwrap();
 
                 let keyboard = composite.interface::<NKROBootKeyboardInterface<'_, _, _>, _>();
@@ -298,7 +322,6 @@ fn main() -> ! {
                     };
                 }
 
-                let rel_rot = rot_enc.rel_value();
                 let consumer_report = MultipleConsumerReport {
                     codes: [
                         if rot_button.is_low().unwrap() {
@@ -339,13 +362,7 @@ fn main() -> ! {
 
             if display_timer.period_complete().unwrap() {
                 oled_display
-                    .draw_left_display(
-                        leds,
-                        &state.keycodes,
-                        state.layer,
-                        usb_state,
-                        rot_enc.abs_value(),
-                    )
+                    .draw_left_display(leds, &state.keycodes, state.layer, usb_state, rel_rot)
                     .ok();
             }
         }
@@ -356,7 +373,7 @@ fn main() -> ! {
 #[interrupt]
 fn USBCTRL_IRQ() {
     cortex_m::interrupt::free(|cs| {
-        let mut usb_ref = IRQ_SHARED.borrow(cs).borrow_mut();
+        let mut usb_ref = USB_IRQ_SHARED.borrow(cs).borrow_mut();
         if usb_ref.is_none() {
             return;
         }
@@ -374,6 +391,22 @@ fn USBCTRL_IRQ() {
                 }
             }
         }
+    });
+
+    cortex_m::asm::sev();
+}
+
+#[exception]
+fn SysTick() {
+    cortex_m::interrupt::free(|cs| {
+        let mut timer_ref = TIMER_SHARED.borrow(cs).borrow_mut();
+        if timer_ref.is_none() {
+            return;
+        }
+
+        let (ref mut keyboard, ref mut rot_enc) = timer_ref.as_mut().unwrap();
+        rot_enc.update();
+        keyboard.update().expect("Failed to update keyboard");
     });
 
     cortex_m::asm::sev();
