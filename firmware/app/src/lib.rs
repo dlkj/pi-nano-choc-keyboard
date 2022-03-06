@@ -41,11 +41,12 @@ impl SyncTimerClock {
 }
 
 impl<'a> embedded_time::clock::Clock for SyncTimerClock {
-    type T = u32;
+    //using u64 to avoid clock wrapping issues
+    type T = u64;
 
     const SCALING_FACTOR: Fraction = Fraction::new(1, 1_000_000u32);
 
     fn try_now(&self) -> Result<Instant<Self>, embedded_time::clock::Error> {
-        cortex_m::interrupt::free(|cs| Ok(Instant::new(self.timer.borrow(cs).get_counter_low())))
+        cortex_m::interrupt::free(|cs| Ok(Instant::new(self.timer.borrow(cs).get_counter())))
     }
 }
