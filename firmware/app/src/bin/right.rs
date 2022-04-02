@@ -3,6 +3,7 @@
 
 use cortex_m_rt::entry;
 use embedded_hal::digital::v2::OutputPin;
+use embedded_hal::digital::v2::ToggleableOutputPin;
 use embedded_hal::prelude::_embedded_hal_serial_Write;
 use embedded_time::duration::Milliseconds;
 use embedded_time::Clock;
@@ -146,6 +147,8 @@ fn main() -> ! {
         .start()
         .unwrap();
 
+    let mut led = pins.led.into_push_pull_output();
+
     info!("Running main loop");
     loop {
         //1ms scan the keys and debounce (was .1 ms)
@@ -171,10 +174,12 @@ fn main() -> ! {
                 .filter_map(|(i, &k)| k.pressed.then(|| i))
                 .collect();
 
+            led.toggle().unwrap();
             for &k in &pressed_keys {
                 block!(uart.write(k as u8)).unwrap();
             }
             block!(uart.write(0xFF)).unwrap();
+            led.toggle().unwrap();
 
             oled_display.draw_right_display(&pressed_keys[..]).ok();
         }

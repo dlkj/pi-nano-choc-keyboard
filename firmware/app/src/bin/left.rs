@@ -32,12 +32,16 @@ use rp_pico::{
 use ssd1306::{prelude::*, size::DisplaySize128x32, I2CDisplayInterface, Ssd1306};
 use usb_device::class_prelude::*;
 use usb_device::prelude::*;
-use usbd_hid_devices::device::consumer::{ConsumerControlInterface, MultipleConsumerReport};
-use usbd_hid_devices::device::keyboard::{KeyboardLedsReport, NKROBootKeyboardInterface};
-use usbd_hid_devices::device::mouse::{WheelMouseInterface, WheelMouseReport};
-use usbd_hid_devices::hid_class::UsbHidClass;
-use usbd_hid_devices::page::Consumer;
-use usbd_hid_devices::prelude::*;
+use usbd_human_interface_device::device::consumer::{
+    ConsumerControlInterface, MultipleConsumerReport,
+};
+use usbd_human_interface_device::device::keyboard::{
+    KeyboardLedsReport, NKROBootKeyboardInterface,
+};
+use usbd_human_interface_device::device::mouse::{WheelMouseInterface, WheelMouseReport};
+use usbd_human_interface_device::hid_class::UsbHidClass;
+use usbd_human_interface_device::page::Consumer;
+use usbd_human_interface_device::prelude::*;
 
 use crate::hal::gpio::{Pin, PullUpInput};
 use app::keyboard::*;
@@ -167,11 +171,11 @@ fn main() -> ! {
 
     let usb_keyboard = UsbHidClassBuilder::new()
         .add_interface(
-            usbd_hid_devices::device::keyboard::NKROBootKeyboardInterface::default_config(clock),
+            usbd_human_interface_device::device::keyboard::NKROBootKeyboardInterface::default_config(clock),
         )
-        .add_interface(usbd_hid_devices::device::mouse::WheelMouseInterface::default_config())
+        .add_interface(usbd_human_interface_device::device::mouse::WheelMouseInterface::default_config())
         .add_interface(
-            usbd_hid_devices::device::consumer::ConsumerControlInterface::default_config(),
+            usbd_human_interface_device::device::consumer::ConsumerControlInterface::default_config(),
         )
         //Build
         .build(usb_alloc);

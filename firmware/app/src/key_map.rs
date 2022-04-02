@@ -1,4 +1,4 @@
-use usbd_hid_devices::page::Keyboard as KeyCode;
+use usbd_human_interface_device::page::Keyboard as KeyCode;
 
 use crate::keyboard::KeyAction;
 use crate::keyboard::KeyFunction;

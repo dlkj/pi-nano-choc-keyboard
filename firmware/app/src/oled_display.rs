@@ -22,7 +22,7 @@ use embedded_time::{Clock, Timer};
 use rand::prelude::SmallRng;
 use rand::{RngCore, SeedableRng};
 use usb_device::prelude::UsbDeviceState;
-use usbd_hid_devices::page::Keyboard as KeyCode;
+use usbd_human_interface_device::page::Keyboard as KeyCode;
 
 use crate::SyncTimerClock;
 
@@ -46,7 +46,7 @@ pub struct OledDisplay<'a, D> {
     clock: &'a SyncTimerClock,
     screen_saver_timer: Timer<'a, OneShot, Running, SyncTimerClock, Milliseconds>,
     rng: SmallRng,
-    leds: usbd_hid_devices::device::keyboard::KeyboardLedsReport,
+    leds: usbd_human_interface_device::device::keyboard::KeyboardLedsReport,
     usb_state: UsbDeviceState,
     layer: usize,
     screen_saver_stars: [Point; 32],
@@ -77,7 +77,7 @@ where
             layer: 0,
             usb_state: UsbDeviceState::Default,
             screen_saver_stars: points,
-            leds: usbd_hid_devices::device::keyboard::KeyboardLedsReport::default(),
+            leds: usbd_human_interface_device::device::keyboard::KeyboardLedsReport::default(),
         }
     }
 
@@ -233,7 +233,7 @@ where
 
     pub fn draw_left_display(
         &mut self,
-        leds: usbd_hid_devices::device::keyboard::KeyboardLedsReport,
+        leds: usbd_human_interface_device::device::keyboard::KeyboardLedsReport,
         keycodes: &[KeyCode],
         layer: usize,
         usb_state: UsbDeviceState,

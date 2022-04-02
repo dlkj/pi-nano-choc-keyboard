@@ -1,7 +1,7 @@
 use arrayvec::ArrayVec;
 use embedded_hal::digital::v2::InputPin;
 use embedded_hal::digital::v2::OutputPin;
-use usbd_hid_devices::page::Keyboard as KeyCode;
+use usbd_human_interface_device::page::Keyboard as KeyCode;
 
 use crate::debounce::DebouncedPin;
 
