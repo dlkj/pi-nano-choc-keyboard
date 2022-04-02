@@ -43,11 +43,12 @@ use usbd_human_interface_device::hid_class::UsbHidClass;
 use usbd_human_interface_device::page::Consumer;
 use usbd_human_interface_device::prelude::*;
 
-use crate::hal::gpio::{Pin, PullUpInput};
 use app::keyboard::*;
 use app::oled_display::OledDisplay;
 use app::rotary_enc::RotaryEncoder;
 use app::SyncTimerClock;
+
+use crate::hal::gpio::{Pin, PullUpInput};
 
 // TODO:
 // * Serial logging
@@ -218,8 +219,6 @@ fn main() -> ! {
     }
 
     let rot_button = pins.gpio8.into_pull_up_input();
-    // let rot_a = DebouncedPin::new(pins.gpio16.into_pull_up_input(), true);
-    // let rot_b =  DebouncedPin::new(pins.gpio17.into_pull_up_input(), true);
 
     let rot_b = pins.gpio16.into_pull_up_input();
     let rot_a = pins.gpio17.into_pull_up_input();
@@ -246,7 +245,7 @@ fn main() -> ! {
         pac::NVIC::unmask(hal::pac::Interrupt::USBCTRL_IRQ);
     };
 
-    //100us
+    //100us timer
     let reload_value = 100 - 1;
     core.SYST.set_reload(reload_value);
     core.SYST.clear_current();

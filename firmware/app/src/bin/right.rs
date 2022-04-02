@@ -1,7 +1,13 @@
 #![no_std]
 #![no_main]
 
+use core::cell::RefCell;
+use core::convert::Infallible;
+
+use cortex_m::interrupt::Mutex;
+use cortex_m::peripheral::syst::SystClkSource;
 use cortex_m_rt::entry;
+use cortex_m_rt::exception;
 use embedded_hal::digital::v2::OutputPin;
 use embedded_hal::digital::v2::ToggleableOutputPin;
 use embedded_hal::prelude::_embedded_hal_serial_Write;
@@ -11,7 +17,8 @@ use log::{info, LevelFilter};
 use nb::block;
 use panic_persist as _;
 use rp_pico::hal::clocks::{self, ClocksManager};
-use rp_pico::hal::gpio::FunctionUart;
+use rp_pico::hal::gpio::PullUpInput;
+use rp_pico::hal::gpio::{FunctionUart, Pin};
 use rp_pico::hal::uart::{self, UartPeripheral};
 use rp_pico::hal::{self, Clock as _};
 use rp_pico::{
@@ -26,14 +33,26 @@ use rp_pico::{
 use ssd1306::{prelude::*, size::DisplaySize128x32, I2CDisplayInterface, Ssd1306};
 
 use app::keyboard::*;
+use app::rotary_enc::RotaryEncoder;
 use app::SyncTimerClock;
 
+type TimerShared = (
+    DiodePinMatrix<DynPin, DynPin>,
+    RotaryEncoder<
+        Pin<hal::gpio::pin::bank0::Gpio14, PullUpInput>,
+        Pin<hal::gpio::pin::bank0::Gpio15, PullUpInput>,
+        Infallible,
+    >,
+);
+
+static TIMER_SHARED: Mutex<RefCell<Option<TimerShared>>> = Mutex::new(RefCell::new(None));
+
 const INPUT_SAMPLE: Milliseconds = Milliseconds(10);
-const PIN_SAMPLE: Milliseconds = Milliseconds(1);
 
 #[entry]
 fn main() -> ! {
     let mut pac = pac::Peripherals::take().unwrap();
+    let mut core = pac::CorePeripherals::take().unwrap();
 
     let mut watchdog = Watchdog::new(pac.WATCHDOG);
 
@@ -95,11 +114,6 @@ fn main() -> ! {
         pac::NVIC::unmask(hal::pac::Interrupt::USBCTRL_IRQ);
     };
 
-    // let rot_pin_a = DebouncedPin::<DynPin>::new(pins.gpio15.into_pull_up_input().into(), true);
-    // let rot_pin_b = DebouncedPin::<DynPin>::new(pins.gpio14.into_pull_up_input().into(), true);
-
-    // let mut rot_enc = RotaryEncoder::new(rot_pin_a, rot_pin_b);
-
     let cols: [DynPin; 6] = [
         pins.gpio5.into_pull_down_input().into(),
         pins.gpio6.into_pull_down_input().into(),
@@ -122,6 +136,13 @@ fn main() -> ! {
         p.set_low().unwrap();
     }
 
+    //let rot_button = pins.gpio8.into_pull_up_input();
+
+    let rot_b = pins.gpio15.into_pull_up_input();
+    let rot_a = pins.gpio14.into_pull_up_input();
+
+    let rot_enc = RotaryEncoder::new(rot_a, rot_b);
+
     let mut uart = UartPeripheral::<_, _>::new(pac.UART0, &mut pac.RESETS)
         .enable(
             uart::common_configs::_19200_8_N_1,
@@ -137,9 +158,20 @@ fn main() -> ! {
 
     info!("Starting");
 
-    let mut matrix = DiodePinMatrix::new(rows, cols);
+    //100us timer
+    let reload_value = 100 - 1;
+    core.SYST.set_reload(reload_value);
+    core.SYST.clear_current();
+    //External clock, driven by the Watchdog - 1 tick per us
+    core.SYST.set_clock_source(SystClkSource::External);
+    core.SYST.enable_interrupt();
+    core.SYST.enable_counter();
 
-    let mut pin_sample_timer = clock.new_timer(PIN_SAMPLE).into_periodic().start().unwrap();
+    let matrix = DiodePinMatrix::new(rows, cols);
+
+    cortex_m::interrupt::free(|cs| {
+        TIMER_SHARED.borrow(cs).replace(Some((matrix, rot_enc)));
+    });
 
     let mut input_timer = clock
         .new_timer(INPUT_SAMPLE)
@@ -151,22 +183,18 @@ fn main() -> ! {
 
     info!("Running main loop");
     loop {
-        //1ms scan the keys and debounce (was .1 ms)
-        if pin_sample_timer.period_complete().unwrap() {
-            // let (p_a, p_b) = rot_enc.pins_borrow_mut();
-            // p_a.update().expect("Failed to update rot a debouncer");
-            // p_b.update().expect("Failed to update rot b debouncer");
-
-            //todo: move onto an interupt timer
-            //rot_enc.update();
-
-            matrix.update().expect("Failed to update keys");
-        }
-
         //10ms
         if input_timer.period_complete().unwrap() {
             //100Hz or slower
-            let keys = matrix.keys().expect("Failed to get matrix keys");
+            let (keys, _rot) = cortex_m::interrupt::free(|cs| {
+                let mut timer_ref = TIMER_SHARED.borrow(cs).borrow_mut();
+
+                let (ref mut matrix, ref mut rot_enc) = timer_ref.as_mut().unwrap();
+                (
+                    matrix.keys().expect("Failed to get matrix keys"),
+                    rot_enc.rel_value(),
+                )
+            });
 
             let pressed_keys: arrayvec::ArrayVec<usize, 36> = keys
                 .iter()
@@ -184,4 +212,20 @@ fn main() -> ! {
             oled_display.draw_right_display(&pressed_keys[..]).ok();
         }
     }
+}
+
+#[exception]
+fn SysTick() {
+    cortex_m::interrupt::free(|cs| {
+        let mut timer_ref = TIMER_SHARED.borrow(cs).borrow_mut();
+        if timer_ref.is_none() {
+            return;
+        }
+
+        let (ref mut matrix, ref mut rot_enc) = timer_ref.as_mut().unwrap();
+        rot_enc.update();
+        matrix.update().expect("Failed to update keys");
+    });
+
+    cortex_m::asm::sev();
 }
