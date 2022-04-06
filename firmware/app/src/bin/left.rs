@@ -75,7 +75,16 @@ type TimerShared = (
     app::keyboard::Keyboard<
         app::keyboard::SplitMatrix<
             app::keyboard::DiodePinMatrix<DynPin, DynPin>,
-            app::keyboard::UartMatrix<UartPeripheral<hal::uart::Enabled, pac::UART0>>,
+            app::keyboard::UartMatrix<
+                UartPeripheral<
+                    hal::uart::Enabled,
+                    pac::UART0,
+                    (
+                        Pin<hal::gpio::pin::bank0::Gpio12, FunctionUart>,
+                        Pin<hal::gpio::pin::bank0::Gpio13, FunctionUart>,
+                    ),
+                >,
+            >,
         >,
         app::keyboard::LayerdKeyboardLayout<75_usize, 3_usize>,
         75_usize,
@@ -225,15 +234,15 @@ fn main() -> ! {
 
     let rot_enc = RotaryEncoder::new(rot_a, rot_b);
 
-    let uart = UartPeripheral::<_, _>::new(pac.UART0, &mut pac.RESETS)
+    let tx_pin = pins.gpio12.into_mode::<FunctionUart>();
+    let rx_pin = pins.gpio13.into_mode::<FunctionUart>();
+
+    let uart = UartPeripheral::<_, _, _>::new(pac.UART0, (tx_pin, rx_pin), &mut pac.RESETS)
         .enable(
             uart::common_configs::_19200_8_N_1,
             clocks.peripheral_clock.freq(),
         )
         .unwrap();
-
-    let _tx_pin = pins.gpio12.into_mode::<FunctionUart>();
-    let _rx_pin = pins.gpio13.into_mode::<FunctionUart>();
 
     // Splash screen
     oled_display.draw_text_screen("Starting...").unwrap();
