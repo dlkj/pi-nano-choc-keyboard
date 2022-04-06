@@ -33,4 +33,5 @@ fp-info-cache
 target/
 
 # editor files
-.vscode/*
+.vscode
+.idea

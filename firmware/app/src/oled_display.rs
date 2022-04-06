@@ -1,5 +1,5 @@
-use crate::keyboard::keycode::KeyCode;
 use core::fmt::Write;
+
 use display_interface::DisplayError;
 use embedded_graphics::primitives::PrimitiveStyleBuilder;
 use embedded_graphics::primitives::RoundedRectangle;
@@ -16,12 +16,15 @@ use embedded_text::{
     style::{HeightMode, TextBoxStyleBuilder},
     TextBox,
 };
+use embedded_time::duration::Milliseconds;
+use embedded_time::timer::param::{OneShot, Running};
+use embedded_time::{Clock, Timer};
 use rand::prelude::SmallRng;
 use rand::{RngCore, SeedableRng};
-use rp_pico::hal::Timer;
 use usb_device::prelude::UsbDeviceState;
+use usbd_human_interface_device::page::Keyboard as KeyCode;
 
-use crate::keyboard;
+use crate::SyncTimerClock;
 
 pub trait FlushableDisplay {
     fn flush(&mut self) -> Result<(), DisplayError>;
@@ -40,23 +43,25 @@ where
 
 pub struct OledDisplay<'a, D> {
     display: D,
-    timer: &'a Timer,
-    last_active: u64,
+    clock: &'a SyncTimerClock,
+    screen_saver_timer: Timer<'a, OneShot, Running, SyncTimerClock, Milliseconds>,
     rng: SmallRng,
-    leds: keyboard::keycode::Leds,
+    leds: usbd_human_interface_device::device::keyboard::KeyboardLedsReport,
     usb_state: UsbDeviceState,
     layer: usize,
     screen_saver_stars: [Point; 32],
 }
 
+const TIMEOUT: Milliseconds = Milliseconds(60_000);
+
 impl<'a, D> OledDisplay<'a, D>
 where
     D: DrawTarget<Color = BinaryColor, Error = DisplayError> + FlushableDisplay,
 {
-    pub fn new(display: D, timer: &'a Timer) -> OledDisplay<'a, D> {
-        let now = timer.get_counter();
+    pub fn new(display: D, clock: &'a SyncTimerClock) -> OledDisplay<'a, D> {
+        let now = clock.try_now().unwrap();
 
-        let mut rng = SmallRng::seed_from_u64(now);
+        let mut rng = SmallRng::seed_from_u64(now.duration_since_epoch().integer() as u64);
 
         let mut points = [Point::default(); 32];
         for p in points.iter_mut() {
@@ -66,13 +71,13 @@ where
 
         OledDisplay {
             display,
-            timer,
-            last_active: now,
+            clock,
+            screen_saver_timer: clock.new_timer(TIMEOUT).start().unwrap(),
             rng,
             layer: 0,
             usb_state: UsbDeviceState::Default,
             screen_saver_stars: points,
-            leds: keyboard::keycode::Leds::empty(),
+            leds: usbd_human_interface_device::device::keyboard::KeyboardLedsReport::default(),
         }
     }
 
@@ -123,6 +128,29 @@ where
             "Base"
         } else {
             write!(&mut buffer, "Layer {}", layer).unwrap();
+            &buffer[..]
+        };
+
+        Text::with_alignment(
+            text,
+            bounding_box.center() + Point::new(0, 4),
+            text_style,
+            Alignment::Center,
+        )
+        .draw(display)?;
+        Ok(())
+    }
+
+    fn draw_rot(display: &mut D, top_left: Point, rot: i32) -> Result<(), DisplayError> {
+        let text_style = MonoTextStyle::new(&FONT_4X6, BinaryColor::On);
+
+        let bounding_box = Rectangle::new(top_left, Size::new(32, 6));
+
+        let mut buffer = arrayvec::ArrayString::<256>::new();
+        let text = if rot == 0 {
+            "Zero"
+        } else {
+            write!(&mut buffer, "{}", rot).unwrap();
             &buffer[..]
         };
 
@@ -205,17 +233,16 @@ where
 
     pub fn draw_left_display(
         &mut self,
-        leds: keyboard::keycode::Leds,
+        leds: usbd_human_interface_device::device::keyboard::KeyboardLedsReport,
         keycodes: &[KeyCode],
         layer: usize,
         usb_state: UsbDeviceState,
+        rot: i32,
     ) -> Result<(), DisplayError> {
-        let now = self.timer.get_counter();
-
         let (modifier_active, key_active) = keycodes.iter().fold((false, false), |(am, ak), &k| {
             (
-                am || k.is_modifier(),
-                ak || !k.is_modifier() && k >= KeyCode::A,
+                am || k >= KeyCode::LeftControl && k <= KeyCode::RightGUI,
+                ak || k < KeyCode::LeftControl && k >= KeyCode::A,
             )
         });
 
@@ -226,32 +253,34 @@ where
             || usb_state != self.usb_state
             || layer != self.layer
         {
-            self.last_active = now;
+            self.screen_saver_timer = self.clock.new_timer(TIMEOUT).start().unwrap();
             self.leds = leds;
             self.usb_state = usb_state;
             self.layer = layer;
         }
 
-        if now - self.last_active > 60_000_000 {
+        if self.screen_saver_timer.is_expired().unwrap() {
             self.draw_screen_saver()
         } else {
             self.display.clear(BinaryColor::Off)?;
 
             //Led indicators
-            if leds.contains(keyboard::keycode::Leds::CAP_LOCK) {
+            if leds.caps_lock {
                 Self::draw_led_indicator(&mut self.display, Point::new(0, 0), "C")?;
             }
 
-            if leds.contains(keyboard::keycode::Leds::NUM_LOCK) {
+            if leds.num_lock {
                 Self::draw_led_indicator(&mut self.display, Point::new(12, 0), "1")?;
             }
 
-            if leds.contains(keyboard::keycode::Leds::SCROLL_LOCK) {
+            if leds.scroll_lock {
                 Self::draw_led_indicator(&mut self.display, Point::new(24, 0), "S")?;
             }
 
             //Layer
             Self::draw_layer_indicator(&mut self.display, Point::new(0, 17), layer)?;
+
+            Self::draw_rot(&mut self.display, Point::new(0, 25), rot)?;
 
             //Keycode indicator
             Self::draw_keycode_indicator(
@@ -269,13 +298,11 @@ where
     }
 
     pub fn draw_right_display(&mut self, pressed_keys: &[usize]) -> Result<(), DisplayError> {
-        let now = self.timer.get_counter();
-
         if !pressed_keys.is_empty() {
-            self.last_active = now;
+            self.screen_saver_timer = self.clock.new_timer(TIMEOUT).start().unwrap();
         }
 
-        if now - self.last_active > 60_000_000 {
+        if self.screen_saver_timer.is_expired().unwrap() {
             self.draw_screen_saver()
         } else {
             let mut output = arrayvec::ArrayString::<1024>::new();

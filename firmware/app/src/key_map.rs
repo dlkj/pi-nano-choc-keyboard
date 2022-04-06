@@ -1,17 +1,28 @@
-use super::keyboard::keycode::KeyCode;
+use usbd_human_interface_device::page::{Consumer, Keyboard as KeyCode};
+
 use crate::keyboard::KeyAction;
 use crate::keyboard::KeyFunction;
 
-const BASE_MAP: [KeyAction; 72] = [
+const BASE_MAP: [KeyAction; 75] = [
     //row 0
     KeyAction::Key {
         code: KeyCode::Escape,
     },
-    KeyAction::Key { code: KeyCode::Kb1 },
-    KeyAction::Key { code: KeyCode::Kb2 },
-    KeyAction::Key { code: KeyCode::Kb3 },
-    KeyAction::Key { code: KeyCode::Kb4 },
-    KeyAction::Key { code: KeyCode::Kb5 },
+    KeyAction::Key {
+        code: KeyCode::Keyboard1,
+    },
+    KeyAction::Key {
+        code: KeyCode::Keyboard2,
+    },
+    KeyAction::Key {
+        code: KeyCode::Keyboard3,
+    },
+    KeyAction::Key {
+        code: KeyCode::Keyboard4,
+    },
+    KeyAction::Key {
+        code: KeyCode::Keyboard5,
+    },
     //row 1
     KeyAction::Key { code: KeyCode::Tab },
     KeyAction::Key { code: KeyCode::Q },
@@ -21,7 +32,7 @@ const BASE_MAP: [KeyAction; 72] = [
     KeyAction::Key { code: KeyCode::T },
     //row 2
     KeyAction::Key {
-        code: KeyCode::BackslashISO,
+        code: KeyCode::NonUSBackslash,
     },
     KeyAction::Key { code: KeyCode::A },
     KeyAction::Key { code: KeyCode::S },
@@ -50,11 +61,11 @@ const BASE_MAP: [KeyAction; 72] = [
     KeyAction::None,
     KeyAction::None,
     KeyAction::Key {
-        code: KeyCode::LeftBracket,
+        code: KeyCode::LeftBrace,
     },
     //row 5
     KeyAction::Key {
-        code: KeyCode::None,
+        code: KeyCode::NoEventIndicated,
     },
     KeyAction::Key {
         code: KeyCode::LeftAlt,
@@ -63,20 +74,30 @@ const BASE_MAP: [KeyAction; 72] = [
         function: KeyFunction::Hyper,
     },
     KeyAction::Key {
-        code: KeyCode::Spacebar,
+        code: KeyCode::Space,
     },
     KeyAction::Key {
-        code: KeyCode::Spacebar,
+        code: KeyCode::Space,
     },
     KeyAction::Layer { n: 1 },
     //right hand
 
     //row 0
-    KeyAction::Key { code: KeyCode::Kb6 },
-    KeyAction::Key { code: KeyCode::Kb7 },
-    KeyAction::Key { code: KeyCode::Kb8 },
-    KeyAction::Key { code: KeyCode::Kb9 },
-    KeyAction::Key { code: KeyCode::Kb0 },
+    KeyAction::Key {
+        code: KeyCode::Keyboard6,
+    },
+    KeyAction::Key {
+        code: KeyCode::Keyboard7,
+    },
+    KeyAction::Key {
+        code: KeyCode::Keyboard8,
+    },
+    KeyAction::Key {
+        code: KeyCode::Keyboard9,
+    },
+    KeyAction::Key {
+        code: KeyCode::Keyboard0,
+    },
     KeyAction::Key {
         code: KeyCode::Minus,
     },
@@ -87,7 +108,7 @@ const BASE_MAP: [KeyAction; 72] = [
     KeyAction::Key { code: KeyCode::O },
     KeyAction::Key { code: KeyCode::P },
     KeyAction::Key {
-        code: KeyCode::Equals,
+        code: KeyCode::Equal,
     },
     //row 2
     KeyAction::Key { code: KeyCode::H },
@@ -98,7 +119,7 @@ const BASE_MAP: [KeyAction; 72] = [
         code: KeyCode::Semicolon,
     },
     KeyAction::Key {
-        code: KeyCode::Apostrophy,
+        code: KeyCode::Apostrophe,
     },
     //row 3
     KeyAction::Key { code: KeyCode::N },
@@ -115,14 +136,14 @@ const BASE_MAP: [KeyAction; 72] = [
     },
     //row 4
     KeyAction::Key {
-        code: KeyCode::RightBracket,
+        code: KeyCode::RightBrace,
     },
     KeyAction::None,
     KeyAction::Key {
-        code: KeyCode::Delete,
+        code: KeyCode::DeleteForward,
     },
     KeyAction::Key {
-        code: KeyCode::Hash,
+        code: KeyCode::NonUSHash,
     },
     KeyAction::Key {
         code: KeyCode::Application,
@@ -131,12 +152,12 @@ const BASE_MAP: [KeyAction; 72] = [
         code: KeyCode::RightControl,
     },
     //row 5
-    KeyAction::Layer { n: 2 },
+    KeyAction::Layer { n: 1 },
     KeyAction::Key {
-        code: KeyCode::Enter,
+        code: KeyCode::ReturnEnter,
     },
     KeyAction::Key {
-        code: KeyCode::Backspace,
+        code: KeyCode::DeleteBackspace,
     },
     KeyAction::Function {
         function: KeyFunction::Meh,
@@ -145,10 +166,16 @@ const BASE_MAP: [KeyAction; 72] = [
         code: KeyCode::RightAlt,
     },
     KeyAction::Key {
-        code: KeyCode::None,
+        code: KeyCode::NoEventIndicated,
     },
+    //right rot button
+    KeyAction::Consumer(Consumer::Mute),
+    //right rot -ve
+    KeyAction::MouseWheel(-1),
+    //right rot +ve
+    KeyAction::MouseWheel(1),
 ];
-const UPPER_MAP: [KeyAction; 72] = [
+const UPPER_MAP: [KeyAction; 75] = [
     //row 0
     KeyAction::FallThrough,
     KeyAction::None,
@@ -195,54 +222,74 @@ const UPPER_MAP: [KeyAction; 72] = [
     //row 0
     KeyAction::None,
     KeyAction::Key {
-        code: KeyCode::KpNumLock,
+        code: KeyCode::LockingNumLock,
     },
     KeyAction::Key {
-        code: KeyCode::KpBackslash,
+        code: KeyCode::KeypadDivide,
     },
     KeyAction::Key {
-        code: KeyCode::KpAsterisk,
+        code: KeyCode::KeypadMultiply,
     },
     KeyAction::Key {
-        code: KeyCode::KpMinus,
+        code: KeyCode::KeypadSubtract,
     },
     KeyAction::Key {
-        code: KeyCode::None,
+        code: KeyCode::NoEventIndicated,
     },
     //row 1
     KeyAction::None,
-    KeyAction::Key { code: KeyCode::Kp7 },
-    KeyAction::Key { code: KeyCode::Kp8 },
-    KeyAction::Key { code: KeyCode::Kp9 },
     KeyAction::Key {
-        code: KeyCode::KpPlus,
+        code: KeyCode::Keypad7,
     },
     KeyAction::Key {
-        code: KeyCode::None,
+        code: KeyCode::Keypad8,
+    },
+    KeyAction::Key {
+        code: KeyCode::Keypad9,
+    },
+    KeyAction::Key {
+        code: KeyCode::KeypadAdd,
+    },
+    KeyAction::Key {
+        code: KeyCode::NoEventIndicated,
     },
     //row 2
     KeyAction::None,
-    KeyAction::Key { code: KeyCode::Kp4 },
-    KeyAction::Key { code: KeyCode::Kp5 },
-    KeyAction::Key { code: KeyCode::Kp6 },
     KeyAction::Key {
-        code: KeyCode::KpEnter,
+        code: KeyCode::Keypad4,
     },
     KeyAction::Key {
-        code: KeyCode::None,
+        code: KeyCode::Keypad5,
+    },
+    KeyAction::Key {
+        code: KeyCode::Keypad6,
+    },
+    KeyAction::Key {
+        code: KeyCode::KeypadEnter,
+    },
+    KeyAction::Key {
+        code: KeyCode::NoEventIndicated,
     },
     //row 3
     KeyAction::None,
-    KeyAction::Key { code: KeyCode::Kp1 },
-    KeyAction::Key { code: KeyCode::Kp2 },
-    KeyAction::Key { code: KeyCode::Kp3 },
+    KeyAction::Key {
+        code: KeyCode::Keypad1,
+    },
+    KeyAction::Key {
+        code: KeyCode::Keypad2,
+    },
+    KeyAction::Key {
+        code: KeyCode::Keypad3,
+    },
     KeyAction::None,
     KeyAction::FallThrough,
     //row 4
     KeyAction::FallThrough,
     KeyAction::FallThrough,
     KeyAction::FallThrough,
-    KeyAction::Key { code: KeyCode::Kp0 },
+    KeyAction::Key {
+        code: KeyCode::Keypad0,
+    },
     KeyAction::FallThrough,
     KeyAction::FallThrough,
     //row 5
@@ -252,9 +299,15 @@ const UPPER_MAP: [KeyAction; 72] = [
     KeyAction::FallThrough,
     KeyAction::Key { code: KeyCode::Dot },
     KeyAction::FallThrough,
+    //right rot button
+    KeyAction::FallThrough,
+    //right rot -ve
+    KeyAction::FallThrough,
+    //right rot +ve
+    KeyAction::FallThrough,
 ];
 
-const LOWER_MAP: [KeyAction; 72] = [
+const LOWER_MAP: [KeyAction; 75] = [
     //row 0
     KeyAction::FallThrough,
     KeyAction::Key { code: KeyCode::F1 },
@@ -356,6 +409,12 @@ const LOWER_MAP: [KeyAction; 72] = [
     KeyAction::FallThrough,
     KeyAction::FallThrough,
     KeyAction::FallThrough,
+    //right rot button
+    KeyAction::FallThrough,
+    //right rot -ve
+    KeyAction::FallThrough,
+    //right rot +ve
+    KeyAction::FallThrough,
 ];
 
-pub const KEY_MAP: [[KeyAction; 72]; 3] = [BASE_MAP, LOWER_MAP, UPPER_MAP];
+pub const KEY_MAP: [[KeyAction; 75]; 3] = [BASE_MAP, LOWER_MAP, UPPER_MAP];
