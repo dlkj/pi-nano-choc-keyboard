@@ -8,6 +8,7 @@ use cortex_m::interrupt::Mutex;
 use cortex_m::peripheral::syst::SystClkSource;
 use cortex_m_rt::entry;
 use cortex_m_rt::exception;
+use embedded_hal::digital::v2::InputPin;
 use embedded_hal::digital::v2::OutputPin;
 use embedded_hal::digital::v2::ToggleableOutputPin;
 use embedded_hal::prelude::_embedded_hal_serial_Write;
@@ -136,7 +137,7 @@ fn main() -> ! {
         p.set_low().unwrap();
     }
 
-    //let rot_button = pins.gpio8.into_pull_up_input();
+    let rot_button = pins.gpio8.into_pull_up_input();
 
     let rot_b = pins.gpio15.into_pull_up_input();
     let rot_a = pins.gpio14.into_pull_up_input();
@@ -186,7 +187,7 @@ fn main() -> ! {
         //10ms
         if input_timer.period_complete().unwrap() {
             //100Hz or slower
-            let (keys, _rot) = cortex_m::interrupt::free(|cs| {
+            let (keys, rot) = cortex_m::interrupt::free(|cs| {
                 let mut timer_ref = TIMER_SHARED.borrow(cs).borrow_mut();
 
                 let (ref mut matrix, ref mut rot_enc) = timer_ref.as_mut().unwrap();
@@ -196,11 +197,20 @@ fn main() -> ! {
                 )
             });
 
-            let pressed_keys: arrayvec::ArrayVec<usize, 36> = keys
+            let mut pressed_keys: arrayvec::ArrayVec<usize, 64> = keys
                 .iter()
                 .enumerate()
                 .filter_map(|(i, &k)| k.pressed.then(|| i))
                 .collect();
+
+            if rot_button.is_low().unwrap() {
+                pressed_keys.push(36);
+            }
+            if rot < 0 {
+                pressed_keys.push(37)
+            } else if rot > 0 {
+                pressed_keys.push(38);
+            }
 
             led.toggle().unwrap();
             for &k in &pressed_keys {

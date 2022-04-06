@@ -77,8 +77,8 @@ type TimerShared = (
             app::keyboard::DiodePinMatrix<DynPin, DynPin>,
             app::keyboard::UartMatrix<UartPeripheral<hal::uart::Enabled, pac::UART0>>,
         >,
-        app::keyboard::LayerdKeyboardLayout<72_usize, 3_usize>,
-        72_usize,
+        app::keyboard::LayerdKeyboardLayout<75_usize, 3_usize>,
+        75_usize,
     >,
     RotaryEncoder<
         Pin<hal::gpio::pin::bank0::Gpio17, PullUpInput>,
@@ -308,9 +308,13 @@ fn main() -> ! {
                     }
                 };
 
+                mouse_report.vertical_wheel += state.mouse_wheel;
+
                 if mouse_report.buttons != last_mouse_buttons
                     || mouse_report.x != 0
                     || mouse_report.y != 0
+                    || mouse_report.vertical_wheel != 0
+                    || mouse_report.horizontal_wheel != 0
                 {
                     let mouse = composite.interface::<WheelMouseInterface<'_, _>, _>();
                     match mouse.write_report(&mouse_report) {
@@ -342,7 +346,7 @@ fn main() -> ! {
                         } else {
                             Consumer::Unassigned
                         },
-                        Consumer::Unassigned,
+                        *state.consumer.first().unwrap_or(&Consumer::Unassigned),
                     ],
                 };
 

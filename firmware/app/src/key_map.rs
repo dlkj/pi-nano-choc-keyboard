@@ -1,9 +1,9 @@
-use usbd_human_interface_device::page::Keyboard as KeyCode;
+use usbd_human_interface_device::page::{Consumer, Keyboard as KeyCode};
 
 use crate::keyboard::KeyAction;
 use crate::keyboard::KeyFunction;
 
-const BASE_MAP: [KeyAction; 72] = [
+const BASE_MAP: [KeyAction; 75] = [
     //row 0
     KeyAction::Key {
         code: KeyCode::Escape,
@@ -168,8 +168,14 @@ const BASE_MAP: [KeyAction; 72] = [
     KeyAction::Key {
         code: KeyCode::NoEventIndicated,
     },
+    //right rot button
+    KeyAction::Consumer(Consumer::Mute),
+    //right rot -ve
+    KeyAction::MouseWheel(-1),
+    //right rot +ve
+    KeyAction::MouseWheel(1),
 ];
-const UPPER_MAP: [KeyAction; 72] = [
+const UPPER_MAP: [KeyAction; 75] = [
     //row 0
     KeyAction::FallThrough,
     KeyAction::None,
@@ -293,9 +299,15 @@ const UPPER_MAP: [KeyAction; 72] = [
     KeyAction::FallThrough,
     KeyAction::Key { code: KeyCode::Dot },
     KeyAction::FallThrough,
+    //right rot button
+    KeyAction::FallThrough,
+    //right rot -ve
+    KeyAction::FallThrough,
+    //right rot +ve
+    KeyAction::FallThrough,
 ];
 
-const LOWER_MAP: [KeyAction; 72] = [
+const LOWER_MAP: [KeyAction; 75] = [
     //row 0
     KeyAction::FallThrough,
     KeyAction::Key { code: KeyCode::F1 },
@@ -397,6 +409,12 @@ const LOWER_MAP: [KeyAction; 72] = [
     KeyAction::FallThrough,
     KeyAction::FallThrough,
     KeyAction::FallThrough,
+    //right rot button
+    KeyAction::FallThrough,
+    //right rot -ve
+    KeyAction::FallThrough,
+    //right rot +ve
+    KeyAction::FallThrough,
 ];
 
-pub const KEY_MAP: [[KeyAction; 72]; 3] = [BASE_MAP, LOWER_MAP, UPPER_MAP];
+pub const KEY_MAP: [[KeyAction; 75]; 3] = [BASE_MAP, LOWER_MAP, UPPER_MAP];

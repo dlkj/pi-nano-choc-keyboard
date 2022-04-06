@@ -1,7 +1,7 @@
 use arrayvec::ArrayVec;
 use embedded_hal::digital::v2::InputPin;
 use embedded_hal::digital::v2::OutputPin;
-use usbd_human_interface_device::page::Keyboard as KeyCode;
+use usbd_human_interface_device::page::{Consumer, Keyboard as KeyCode};
 
 use crate::debounce::DebouncedPin;
 
@@ -11,6 +11,8 @@ pub enum KeyAction {
     None,
     FallThrough,
     Function { function: KeyFunction },
+    Consumer(Consumer),
+    MouseWheel(i8),
     Layer { n: usize },
 }
 
@@ -130,10 +132,10 @@ pub struct SplitMatrix<M1, M2> {
     pub matrix2: M2,
 }
 
-impl<M1, M2, E1, E2> KeyboardMatrix<72> for SplitMatrix<M1, M2>
+impl<M1, M2, E1, E2> KeyboardMatrix<75> for SplitMatrix<M1, M2>
 where
     M1: KeyboardMatrix<36, Error = E1>,
-    M2: KeyboardMatrix<36, Error = E2>,
+    M2: KeyboardMatrix<39, Error = E2>,
     E1: core::fmt::Debug,
     E2: core::fmt::Debug,
 {
@@ -145,14 +147,14 @@ where
         Ok(())
     }
 
-    fn keys(&mut self) -> Result<[KeyState; 72], Self::Error> {
+    fn keys(&mut self) -> Result<[KeyState; 75], Self::Error> {
         let k1 = self.matrix1.keys().unwrap();
         let k2 = self.matrix2.keys().unwrap();
 
-        let mut keys = [KeyState::default(); 72];
+        let mut keys = [KeyState::default(); 75];
 
         keys[..36].clone_from_slice(&k1);
-        keys[36..72].clone_from_slice(&k2);
+        keys[36..75].clone_from_slice(&k2);
 
         Ok(keys)
     }
@@ -176,7 +178,7 @@ impl<U> UartMatrix<U> {
     }
 }
 
-impl<U> KeyboardMatrix<36> for UartMatrix<U>
+impl<U> KeyboardMatrix<39> for UartMatrix<U>
 where
     U: embedded_hal::serial::Read<u8>,
 {
@@ -192,7 +194,7 @@ where
                 }
             } else if x == 0xFF {
                 self.current = self.next.take();
-            } else if x < 36 {
+            } else if x < 39 {
                 self.next.push(x);
             }
         }
@@ -200,8 +202,8 @@ where
         Ok(())
     }
 
-    fn keys(&mut self) -> Result<[KeyState; 36], Self::Error> {
-        let mut keys = [KeyState::default(); 36];
+    fn keys(&mut self) -> Result<[KeyState; 39], Self::Error> {
+        let mut keys = [KeyState::default(); 39];
 
         for &k in &self.current {
             keys[k as usize].pressed = true;
@@ -214,6 +216,8 @@ where
 #[derive(Debug)]
 pub struct KeyboardLayoutState<const KEY_COUNT: usize> {
     pub keycodes: ArrayVec<KeyCode, KEY_COUNT>,
+    pub consumer: ArrayVec<Consumer, KEY_COUNT>,
+    pub mouse_wheel: i8,
     pub layer: usize,
 }
 
@@ -261,6 +265,8 @@ impl<const N: usize, const L: usize> KeyboardLayout<N> for LayerdKeyboardLayout<
         }
 
         let mut keycodes = arrayvec::ArrayVec::new();
+        let mut consumer = arrayvec::ArrayVec::new();
+        let mut mouse_wheel = 0;
 
         for (i, _) in keys.iter().enumerate().filter(|(_, &k)| k.pressed) {
             let mut key = KeyAction::FallThrough;
@@ -306,11 +312,19 @@ impl<const N: usize, const L: usize> KeyboardLayout<N> for LayerdKeyboardLayout<
                 KeyAction::FallThrough => {
                     //can't fall any lower, same as None
                 }
+                KeyAction::Consumer(c) => {
+                    consumer.push(c);
+                }
+                KeyAction::MouseWheel(i) => {
+                    mouse_wheel += i;
+                }
             }
         }
 
         KeyboardLayoutState {
             keycodes,
+            consumer,
+            mouse_wheel,
             layer: max_layer,
         }
     }
@@ -319,6 +333,8 @@ impl<const N: usize, const L: usize> KeyboardLayout<N> for LayerdKeyboardLayout<
 #[derive(Debug)]
 pub struct KeyboardState<const KEY_COUNT: usize> {
     pub keycodes: ArrayVec<KeyCode, KEY_COUNT>,
+    pub consumer: ArrayVec<Consumer, KEY_COUNT>,
+    pub mouse_wheel: i8,
     pub keys: [KeyState; KEY_COUNT],
     pub layer: usize,
 }
@@ -346,6 +362,8 @@ where
             keycodes: layout_state.keycodes,
             keys,
             layer: layout_state.layer,
+            consumer: layout_state.consumer,
+            mouse_wheel: layout_state.mouse_wheel,
         })
     }
 }
