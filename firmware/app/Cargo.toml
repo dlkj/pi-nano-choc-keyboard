@@ -23,9 +23,9 @@ ssd1306 = "0.7"
 rp-pico = { version = "0.3" }
 rp2040-boot2 = { version = "0.2" }
 embedded-time = {version = "0.12"}
-embedded-graphics = "0.7.1"
-embedded-text = { version = "0.5.0", default-features = false }
-display-interface = "0.4.1"
+embedded-graphics = "0.7"
+embedded-text = { version = "0.5", default-features = false }
+display-interface = "0.4"
 arrayvec = { version = "0.7", default-features = false }
 log = "0.4"
 bitflags = "1.3"
