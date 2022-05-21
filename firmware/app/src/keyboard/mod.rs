@@ -55,6 +55,13 @@ where
 {
     type Error = P::Error;
 
+    fn update(&mut self) -> Result<(), Self::Error> {
+        for p in &mut self.pins {
+            p.update()?;
+        }
+        Ok(())
+    }
+
     fn keys(&mut self) -> Result<[KeyState; N], Self::Error> {
         let mut keystates = [KeyState::default(); N];
 
@@ -62,13 +69,6 @@ where
             keystates[i].pressed = p.is_high()?;
         }
         Ok(keystates)
-    }
-
-    fn update(&mut self) -> Result<(), Self::Error> {
-        for p in &mut self.pins {
-            p.update()?;
-        }
-        Ok(())
     }
 }
 

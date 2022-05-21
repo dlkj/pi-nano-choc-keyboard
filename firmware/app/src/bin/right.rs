@@ -2,6 +2,7 @@
 #![no_main]
 
 use core::cell::RefCell;
+use core::cmp::Ordering;
 use core::convert::Infallible;
 
 use cortex_m::interrupt::Mutex;
@@ -49,6 +50,7 @@ type TimerShared = (
 static TIMER_SHARED: Mutex<RefCell<Option<TimerShared>>> = Mutex::new(RefCell::new(None));
 
 const INPUT_SAMPLE: Milliseconds = Milliseconds(10);
+const DISPLAY_UPDATE: Milliseconds = Milliseconds(20);
 
 #[entry]
 fn main() -> ! {
@@ -159,8 +161,8 @@ fn main() -> ! {
 
     info!("Starting");
 
-    //100us timer
-    let reload_value = 100 - 1;
+    //1ms timer
+    let reload_value = 1000 - 1;
     core.SYST.set_reload(reload_value);
     core.SYST.clear_current();
     //External clock, driven by the Watchdog - 1 tick per us
@@ -176,6 +178,12 @@ fn main() -> ! {
 
     let mut input_timer = clock
         .new_timer(INPUT_SAMPLE)
+        .into_periodic()
+        .start()
+        .unwrap();
+
+    let mut display_timer = clock
+        .new_timer(DISPLAY_UPDATE)
         .into_periodic()
         .start()
         .unwrap();
@@ -206,10 +214,12 @@ fn main() -> ! {
             if rot_button.is_low().unwrap() {
                 pressed_keys.push(36);
             }
-            if rot < 0 {
-                pressed_keys.push(37)
-            } else if rot > 0 {
-                pressed_keys.push(38);
+            match rot.cmp(&0) {
+                Ordering::Less => pressed_keys.push(37),
+                Ordering::Equal => {}
+                Ordering::Greater => {
+                    pressed_keys.push(38);
+                }
             }
 
             led.toggle().unwrap();
@@ -219,7 +229,9 @@ fn main() -> ! {
             block!(uart.write(0xFF)).unwrap();
             led.toggle().unwrap();
 
-            oled_display.draw_right_display(&pressed_keys[..]).ok();
+            if display_timer.period_complete().unwrap() {
+                oled_display.draw_right_display(&pressed_keys[..]).ok();
+            }
         }
     }
 }

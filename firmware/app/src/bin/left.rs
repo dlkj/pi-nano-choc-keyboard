@@ -100,7 +100,7 @@ static USB_IRQ_SHARED: Mutex<RefCell<Option<UsbShared>>> = Mutex::new(RefCell::n
 static TIMER_SHARED: Mutex<RefCell<Option<TimerShared>>> = Mutex::new(RefCell::new(None));
 
 const INPUT_SAMPLE: Milliseconds = Milliseconds(10);
-const DISPLAY_UPDATE: Milliseconds = Milliseconds(40);
+const DISPLAY_UPDATE: Milliseconds = Milliseconds(20);
 
 #[entry]
 fn main() -> ! {
@@ -254,8 +254,8 @@ fn main() -> ! {
         pac::NVIC::unmask(hal::pac::Interrupt::USBCTRL_IRQ);
     };
 
-    //100us timer
-    let reload_value = 100 - 1;
+    //1ms timer
+    let reload_value = 1000 - 1;
     core.SYST.set_reload(reload_value);
     core.SYST.clear_current();
     //External clock, driven by the Watchdog - 1 tick per us

@@ -8,7 +8,7 @@ use embedded_time::duration::Fraction;
 use embedded_time::Instant;
 use rp_pico::hal::Timer;
 
-use crate::oled_display::FlushableDisplay;
+use crate::oled_display::HardwareDisplay;
 
 pub mod debounce;
 pub mod key_map;
@@ -18,7 +18,7 @@ pub mod rotary_enc;
 
 pub fn check_for_persisted_panic<D>(display: &mut oled_display::OledDisplay<'_, D>)
 where
-    D: DrawTarget<Color = BinaryColor, Error = DisplayError> + FlushableDisplay,
+    D: DrawTarget<Color = BinaryColor, Error = DisplayError> + HardwareDisplay,
 {
     if let Some(msg) = panic_persist::get_panic_message_utf8() {
         display.draw_text_screen(msg).ok();

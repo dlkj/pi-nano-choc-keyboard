@@ -21,23 +21,33 @@ use embedded_time::timer::param::{OneShot, Running};
 use embedded_time::{Clock, Timer};
 use rand::prelude::SmallRng;
 use rand::{RngCore, SeedableRng};
+use ssd1306::prelude::Brightness;
 use usb_device::prelude::UsbDeviceState;
 use usbd_human_interface_device::page::Keyboard as KeyCode;
 
 use crate::SyncTimerClock;
 
-pub trait FlushableDisplay {
+pub trait HardwareDisplay {
     fn flush(&mut self) -> Result<(), DisplayError>;
+    fn set_brightness_dimmest(&mut self) -> Result<(), DisplayError>;
+    fn set_brightness_brightest(&mut self) -> Result<(), DisplayError>;
 }
 
-impl<DI, SIZE> FlushableDisplay
+impl<DI, SIZE> HardwareDisplay
     for ssd1306::Ssd1306<DI, SIZE, ssd1306::mode::BufferedGraphicsMode<SIZE>>
 where
     DI: display_interface::WriteOnlyDataCommand,
     SIZE: ssd1306::size::DisplaySize,
 {
-    fn flush(&mut self) -> Result<(), display_interface::DisplayError> {
+    fn flush(&mut self) -> Result<(), DisplayError> {
         self.flush()
+    }
+    fn set_brightness_dimmest(&mut self) -> Result<(), DisplayError> {
+        self.set_brightness(Brightness::DIMMEST)
+    }
+
+    fn set_brightness_brightest(&mut self) -> Result<(), DisplayError> {
+        self.set_brightness(Brightness::BRIGHTEST)
     }
 }
 
@@ -56,7 +66,7 @@ const TIMEOUT: Milliseconds = Milliseconds(60_000);
 
 impl<'a, D> OledDisplay<'a, D>
 where
-    D: DrawTarget<Color = BinaryColor, Error = DisplayError> + FlushableDisplay,
+    D: DrawTarget<Color = BinaryColor, Error = DisplayError> + HardwareDisplay,
 {
     pub fn new(display: D, clock: &'a SyncTimerClock) -> OledDisplay<'a, D> {
         let now = clock.try_now().unwrap();
@@ -260,9 +270,11 @@ where
         }
 
         if self.screen_saver_timer.is_expired().unwrap() {
+            self.display.set_brightness_dimmest().ok();
             self.draw_screen_saver()
         } else {
             self.display.clear(BinaryColor::Off)?;
+            self.display.set_brightness_brightest().ok();
 
             //Led indicators
             if leds.caps_lock {
@@ -303,8 +315,10 @@ where
         }
 
         if self.screen_saver_timer.is_expired().unwrap() {
+            self.display.set_brightness_dimmest().ok();
             self.draw_screen_saver()
         } else {
+            self.display.set_brightness_brightest().ok();
             let mut output = arrayvec::ArrayString::<1024>::new();
             if write!(&mut output, "k:\ns{:#02?}\n", &pressed_keys)
                 .ok()
