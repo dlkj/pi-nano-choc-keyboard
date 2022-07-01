@@ -20,7 +20,7 @@ cortex-m-rt = "0.7"
 embedded-hal = { version = "0.2", features=["unproven"] }
 usb-device= "0.2"
 ssd1306 = "0.7"
-rp-pico = { version = "0.3" }
+rp-pico = { version = "0.4" }
 rp2040-boot2 = { version = "0.2" }
 embedded-time = {version = "0.12"}
 embedded-graphics = "0.7"
